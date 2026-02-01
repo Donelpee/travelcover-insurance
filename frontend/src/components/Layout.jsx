@@ -7,7 +7,7 @@ export default function Layout() {
       <header className="bg-blue-600 text-white shadow-md">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold">TravelGuard Insurance</h1>
+            <h1 className="text-2xl font-bold">TravelCover Insurance</h1>
             <div className="text-sm">
               <span className="mr-4">Welcome, Admin</span>
               <button className="bg-blue-700 px-4 py-2 rounded hover:bg-blue-800">
