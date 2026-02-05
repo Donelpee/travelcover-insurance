@@ -1,8 +1,64 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../services/supabase'
-import { Plus, Trash2, Save, Truck, MapPin, Users } from 'lucide-react'
+import { Plus, Trash2, Save, Users } from 'lucide-react'
 import { success, error } from '../utils/notifications'
+
+// Schedule automated jobs
+async function scheduleAutomatedJobs(manifestId, tripDate) {
+  try {
+    const { data: rules, error: rulesError } = await supabase
+      .from('automation_rules')
+      .select('*')
+      .eq('is_active', true)
+
+    if (rulesError) {
+      console.error('Error fetching automation rules:', rulesError)
+      return
+    }
+
+    if (!rules || rules.length === 0) {
+      console.log('No active automation rules found')
+      return
+    }
+
+    const tripDateTime = new Date(tripDate)
+    const jobsToInsert = []
+
+    for (const rule of rules) {
+      let scheduledTime = new Date(tripDateTime)
+      
+      if (rule.trigger_type === 'before_trip') {
+        scheduledTime.setHours(scheduledTime.getHours() - rule.trigger_offset_hours)
+      } else if (rule.trigger_type === 'trip_start') {
+        // Send at trip time
+      } else if (rule.trigger_type === 'trip_end') {
+        scheduledTime.setHours(scheduledTime.getHours() + 8) // Assume 8hr trip
+      } else if (rule.trigger_type === 'after_trip') {
+        scheduledTime.setHours(scheduledTime.getHours() + rule.trigger_offset_hours)
+      }
+
+      jobsToInsert.push({
+        manifest_id: manifestId,
+        automation_rule_id: rule.id,
+        scheduled_time: scheduledTime.toISOString(),
+        status: 'pending'
+      })
+    }
+
+    const { error: insertError } = await supabase
+      .from('scheduled_jobs')
+      .insert(jobsToInsert)
+
+    if (insertError) {
+      console.error('Error scheduling jobs:', insertError)
+    } else {
+      console.log(`Scheduled ${jobsToInsert.length} automated jobs`)
+    }
+  } catch (error) {
+    console.error('Error scheduling automated jobs:', error)
+  }
+}
 
 export default function EditManifest() {
   const navigate = useNavigate()
@@ -16,10 +72,10 @@ export default function EditManifest() {
     company_id: '',
     route_id: '',
     trip_date: '',
-    departure_time: '',
-    image_url: location.state?.imageUrl || ''
+    departure_time: ''
   })
   const [saving, setSaving] = useState(false)
+  const [capturedImage, setCapturedImage] = useState(null)
 
   useEffect(() => {
     fetchCompanies()
@@ -28,29 +84,55 @@ export default function EditManifest() {
     if (location.state?.passengers) {
       setPassengers(location.state.passengers)
     }
-  }, [])
+    
+    // Check if we have an image from capture
+    if (location.state?.hasImage) {
+      // Try to get image from sessionStorage
+      const storedImage = sessionStorage.getItem('capturedImage')
+      if (storedImage) {
+        setCapturedImage(storedImage)
+      }
+    }
+    
+    // Clean up sessionStorage when component unmounts
+    return () => {
+      sessionStorage.removeItem('capturedImage')
+      sessionStorage.removeItem('capturedImageTimestamp')
+    }
+  }, [location.state])
 
   async function fetchCompanies() {
-    const { data } = await supabase
-      .from('transport_companies')
-      .select('*')
-      .eq('status', 'active')
-      .order('company_name')
-    
-    setCompanies(data || [])
+    try {
+      const { data, error } = await supabase
+        .from('transport_companies')
+        .select('*')
+        .eq('status', 'active')
+        .order('company_name')
+      
+      if (error) throw error
+      setCompanies(data || [])
+    } catch (err) {
+      console.error('Error fetching companies:', err)
+      error('Error loading companies', 'Please try again later')
+    }
   }
 
   async function fetchRoutes() {
-    const { data } = await supabase
-      .from('routes')
-      .select('*')
-      .eq('status', 'active')
-      .order('route_name')
-    
-    setRoutes(data || [])
+    try {
+      const { data, error } = await supabase
+        .from('routes')
+        .select('*')
+        .eq('status', 'active')
+        .order('route_name')
+      
+      if (error) throw error
+      setRoutes(data || [])
+    } catch (err) {
+      console.error('Error fetching routes:', err)
+      error('Error loading routes', 'Please try again later')
+    }
   }
 
-  // Filter routes when company is selected
   useEffect(() => {
     if (manifestData.company_id) {
       const filtered = routes.filter(r => r.company_id === manifestData.company_id)
@@ -60,20 +142,15 @@ export default function EditManifest() {
     }
   }, [manifestData.company_id, routes])
 
-  // Auto-populate departure time when route is selected
   useEffect(() => {
     if (manifestData.route_id && routes.length > 0) {
       const selectedRoute = routes.find(r => r.id === manifestData.route_id)
-      console.log('Selected Route:', selectedRoute)
       
-      if (selectedRoute) {
-        if (selectedRoute.typical_departure_time) {
-          console.log('Setting departure time to:', selectedRoute.typical_departure_time)
-          setManifestData(prev => ({
-            ...prev,
-            departure_time: selectedRoute.typical_departure_time
-          }))
-        }
+      if (selectedRoute?.typical_departure_time) {
+        setManifestData(prev => ({
+          ...prev,
+          departure_time: selectedRoute.typical_departure_time
+        }))
       }
     }
   }, [manifestData.route_id, routes])
@@ -132,36 +209,69 @@ export default function EditManifest() {
     return 'border-red-200 bg-red-50'
   }
 
+  async function uploadImageToStorage(imageBase64, manifestRef) {
+    try {
+      // Convert Base64 to Blob
+      const response = await fetch(imageBase64)
+      const blob = await response.blob()
+      
+      const fileName = `manifest_${manifestRef}_${Date.now()}.jpg`
+      
+      // Upload to Supabase storage
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('manifest-images') // Make sure this bucket exists in Supabase
+        .upload(fileName, blob, {
+          cacheControl: '3600',
+          upsert: false
+        })
+      
+      if (uploadError) {
+        console.error('Error uploading image:', uploadError)
+        return null
+      }
+      
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('manifest-images')
+        .getPublicUrl(fileName)
+      
+      return urlData.publicUrl
+    } catch (err) {
+      console.error('Error in image upload:', err)
+      return null
+    }
+  }
+
   async function saveManifest() {
-    // Validate trip details
     if (!manifestData.company_id || !manifestData.route_id || !manifestData.trip_date) {
       error('Missing trip details', 'Company, Route, and Trip Date are required')
       return
     }
 
-    // Validate passengers
     if (passengers.length === 0) {
       error('No passengers added', 'Please add at least one passenger')
       return
     }
 
-    let hasError = false
+    // Validate all passengers
     for (let i = 0; i < passengers.length; i++) {
       const passenger = passengers[i]
       if (!passenger.full_name || !passenger.phone_number || !passenger.next_of_kin_name || !passenger.next_of_kin_phone) {
         error(`Passenger ${i + 1} incomplete`, 'Name, Phone, Next of Kin Name & Phone are required')
-        hasError = true
-        break
+        return
       }
     }
-
-    if (hasError) return
 
     setSaving(true)
 
     try {
-      // Generate manifest reference
       const manifestRef = `MAN-${Date.now()}`
+      let imageUrl = ''
+
+      // Upload image if exists
+      if (capturedImage) {
+        imageUrl = await uploadImageToStorage(capturedImage, manifestRef)
+      }
 
       // Insert manifest
       const { data: manifest, error: manifestError } = await supabase
@@ -173,8 +283,8 @@ export default function EditManifest() {
           trip_date: manifestData.trip_date,
           departure_time: manifestData.departure_time,
           total_passengers: passengers.length,
-          image_url: manifestData.image_url,
-          extraction_method: 'manual',
+          image_url: imageUrl || null,
+          extraction_method: capturedImage ? 'ocr' : 'manual',
           processed_at: new Date().toISOString()
         }])
         .select()
@@ -200,14 +310,22 @@ export default function EditManifest() {
 
       if (passengersError) throw passengersError
 
+      // Schedule automated jobs
+      await scheduleAutomatedJobs(manifest.id, manifestData.trip_date)
+
       success('Manifest saved successfully!', `${passengers.length} passenger${passengers.length === 1 ? '' : 's'} recorded`)
       
-      // Navigate to Send SMS page
-      navigate('/send-sms', { state: { manifestId: manifest.id } })
+      // Navigate with only serializable data
+      navigate('/send-sms', { 
+        state: { 
+          manifestId: manifest.id,
+          passengersCount: passengers.length
+        } 
+      })
 
     } catch (err) {
       console.error('Error saving manifest:', err)
-      error('Error saving manifest', err.message)
+      error('Error saving manifest', err.message || 'Please try again')
     } finally {
       setSaving(false)
     }
@@ -217,7 +335,6 @@ export default function EditManifest() {
     <div>
       <h2 className="text-3xl font-bold text-gray-800 mb-8">Edit Manifest Data</h2>
 
-      {/* Trip Details */}
       <div className="bg-white rounded-lg shadow p-6 mb-6">
         <h3 className="text-xl font-semibold mb-4">Trip Details</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -283,7 +400,6 @@ export default function EditManifest() {
         </div>
       </div>
 
-      {/* Passengers List */}
       <div className="bg-white rounded-lg shadow p-6 mb-6">
         <div className="flex justify-between items-center mb-6 pb-4 border-b">
           <div>
@@ -317,7 +433,6 @@ export default function EditManifest() {
               key={passenger.id}
               className={`border-2 rounded-xl p-6 transition-all ${getConfidenceColor(passenger.confidence_score)}`}
             >
-              {/* Passenger Header */}
               <div className="flex justify-between items-center mb-5 pb-3 border-b border-gray-200">
                 <h4 className="text-lg font-semibold text-gray-800 flex items-center">
                   <span className="bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center mr-3 text-sm">
@@ -328,13 +443,11 @@ export default function EditManifest() {
                 <button
                   onClick={() => deletePassenger(index)}
                   className="text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors"
-                  title="Remove passenger"
                 >
                   <Trash2 size={20} />
                 </button>
               </div>
 
-              {/* Passenger Information Section */}
               <div className="mb-5">
                 <h5 className="text-sm font-semibold text-gray-700 mb-3 flex items-center">
                   <Users size={16} className="mr-2" />
@@ -384,7 +497,6 @@ export default function EditManifest() {
                 </div>
               </div>
 
-              {/* Next of Kin Section */}
               <div>
                 <h5 className="text-sm font-semibold text-gray-700 mb-3 flex items-center">
                   <Users size={16} className="mr-2" />
@@ -446,7 +558,6 @@ export default function EditManifest() {
         </div>
       </div>
 
-      {/* Action Buttons */}
       <div className="flex space-x-4">
         <button
           onClick={() => navigate('/capture-manifest')}

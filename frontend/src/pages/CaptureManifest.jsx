@@ -3,46 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { Camera, Upload, ArrowRight, Loader, X } from 'lucide-react'
 import Tesseract from 'tesseract.js'
 import { success, error, warning, info } from '../utils/notifications'
-import { supabase } from '../services/supabase'
-
-// Schedule automated jobs based on active automation rules
-async function scheduleAutomatedJobs(manifestId, tripDate) {
-  try {
-    const { data: rules } = await supabase
-      .from('automation_rules')
-      .select('*')
-      .eq('is_active', true)
-
-    if (!rules || rules.length === 0) return
-
-    const tripDateTime = new Date(tripDate)
-    
-    for (const rule of rules) {
-      let scheduledTime = new Date(tripDateTime)
-      
-      if (rule.trigger_type === 'before_trip') {
-        scheduledTime.setHours(scheduledTime.getHours() - rule.trigger_offset_hours)
-      } else if (rule.trigger_type === 'trip_start') {
-        // Send at trip time
-      } else if (rule.trigger_type === 'trip_end') {
-        scheduledTime.setHours(scheduledTime.getHours() + 8) // Assume 8hr trip
-      } else if (rule.trigger_type === 'after_trip') {
-        scheduledTime.setHours(scheduledTime.getHours() + rule.trigger_offset_hours)
-      }
-
-      await supabase.from('scheduled_jobs').insert({
-        manifest_id: manifestId,
-        automation_rule_id: rule.id,
-        scheduled_time: scheduledTime.toISOString(),
-        status: 'pending'
-      })
-    }
-    
-    console.log('Automated jobs scheduled successfully')
-  } catch (error) {
-    console.error('Error scheduling automated jobs:', error)
-  }
-}
 
 export default function CaptureManifest() {
   const [image, setImage] = useState(null)
@@ -134,28 +94,23 @@ export default function CaptureManifest() {
         const canvas = document.createElement('canvas')
         const ctx = canvas.getContext('2d')
         
-        // Set canvas to image dimensions
         canvas.width = img.width
         canvas.height = img.height
         
-        // Draw original image
         ctx.drawImage(img, 0, 0)
         
-        // Get image data
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
         const data = imageData.data
         
-        // Convert to grayscale and increase contrast
         for (let i = 0; i < data.length; i += 4) {
           const avg = (data[i] + data[i + 1] + data[i + 2]) / 3
-          // Increase contrast
           const contrast = 1.5
           const factor = (259 * (contrast + 255)) / (255 * (259 - contrast))
           const newValue = factor * (avg - 128) + 128
           
-          data[i] = newValue     // Red
-          data[i + 1] = newValue // Green
-          data[i + 2] = newValue // Blue
+          data[i] = newValue
+          data[i + 1] = newValue
+          data[i + 2] = newValue
         }
         
         ctx.putImageData(imageData, 0, 0)
@@ -178,10 +133,8 @@ export default function CaptureManifest() {
     try {
       info('Processing image...', 'This may take 30-60 seconds')
 
-      // Preprocess image for better OCR
       const processedImage = await preprocessImage(imagePreview)
 
-      // Step 1: OCR with Tesseract
       const result = await Tesseract.recognize(
         processedImage,
         'eng',
@@ -219,8 +172,7 @@ export default function CaptureManifest() {
       state: {
         passengers: [],
         imageUrl: imagePreview,
-        extractedText: extractedText,
-        scheduleJobs: scheduleAutomatedJobs // Pass function to EditManifest
+        extractedText: extractedText
       }
     })
   }
@@ -240,11 +192,9 @@ export default function CaptureManifest() {
       <h2 className="text-3xl font-bold text-gray-800 mb-8">Capture Manifest</h2>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left Column - Image Capture/Upload */}
         <div className="bg-white rounded-lg shadow p-6">
           {!imagePreview ? (
             <div className="space-y-6">
-              {/* Camera Section */}
               <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
                 <h3 className="text-lg font-semibold mb-4 flex items-center">
                   <Camera className="mr-2 text-blue-600" size={24} />
@@ -290,7 +240,6 @@ export default function CaptureManifest() {
                 <canvas ref={canvasRef} className="hidden" />
               </div>
 
-              {/* Upload Section */}
               <div className="relative">
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-gray-300"></div>
@@ -326,7 +275,6 @@ export default function CaptureManifest() {
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Image Preview */}
               <div className="border-2 border-gray-200 rounded-lg overflow-hidden">
                 <img
                   src={imagePreview}
@@ -335,7 +283,6 @@ export default function CaptureManifest() {
                 />
               </div>
 
-              {/* Action Buttons */}
               {!processing && !extractedText && (
                 <div className="flex space-x-3">
                   <button
@@ -367,7 +314,6 @@ export default function CaptureManifest() {
           )}
         </div>
 
-        {/* Right Column - Processing Status & Extracted Text */}
         <div className="bg-white rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold mb-4">Extraction Results</h3>
 
@@ -432,10 +378,9 @@ export default function CaptureManifest() {
         </div>
       </div>
 
-      {/* Skip Option */}
       <div className="mt-6 text-center">
         <button
-          onClick={() => navigate('/edit-manifest', { state: { passengers: [], scheduleJobs: scheduleAutomatedJobs } })}
+          onClick={() => navigate('/edit-manifest', { state: { passengers: [] } })}
           className="text-blue-600 hover:text-blue-800 underline font-medium"
         >
           Skip image capture and add passengers manually →
