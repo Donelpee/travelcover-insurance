@@ -109,6 +109,16 @@ export default function Layout() {
     <span>Scheduled Messages</span>
   </Link>
 </li>
+
+<li>
+  <Link
+    to="/automation"
+    className="flex items-center space-x-3 px-4 py-3 rounded-lg hover:bg-blue-50 text-gray-700 hover:text-blue-600"
+  >
+    <Clock size={20} />
+    <span>Automation Rules</span>
+  </Link>
+</li>
             </ul>
           </nav>
         </aside>

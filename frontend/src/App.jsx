@@ -13,6 +13,7 @@ import SMSScheduleRules from './pages/SMSScheduleRules'
 import ScheduledMessages from './pages/ScheduledMessages'
 import { Toaster } from 'react-hot-toast'
 import EmailTemplates from './pages/EmailTemplates'
+import Automation from './pages/Automation'
 
 function App() {
   return ( 
@@ -33,6 +34,7 @@ function App() {
             <Route path="/message-schedule-rules" element={<SMSScheduleRules />} />
             <Route path="/scheduled-messages" element={<ScheduledMessages />} />
             <Route path="/email-templates" element={<EmailTemplates />} />
+            <Route path="/automation" element={<Automation />} />
           </Route>
         </Routes>
       </BrowserRouter>

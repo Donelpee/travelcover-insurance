@@ -3,6 +3,46 @@ import { useNavigate } from 'react-router-dom'
 import { Camera, Upload, ArrowRight, Loader, X } from 'lucide-react'
 import Tesseract from 'tesseract.js'
 import { success, error, warning, info } from '../utils/notifications'
+import { supabase } from '../services/supabase'
+
+// Schedule automated jobs based on active automation rules
+async function scheduleAutomatedJobs(manifestId, tripDate) {
+  try {
+    const { data: rules } = await supabase
+      .from('automation_rules')
+      .select('*')
+      .eq('is_active', true)
+
+    if (!rules || rules.length === 0) return
+
+    const tripDateTime = new Date(tripDate)
+    
+    for (const rule of rules) {
+      let scheduledTime = new Date(tripDateTime)
+      
+      if (rule.trigger_type === 'before_trip') {
+        scheduledTime.setHours(scheduledTime.getHours() - rule.trigger_offset_hours)
+      } else if (rule.trigger_type === 'trip_start') {
+        // Send at trip time
+      } else if (rule.trigger_type === 'trip_end') {
+        scheduledTime.setHours(scheduledTime.getHours() + 8) // Assume 8hr trip
+      } else if (rule.trigger_type === 'after_trip') {
+        scheduledTime.setHours(scheduledTime.getHours() + rule.trigger_offset_hours)
+      }
+
+      await supabase.from('scheduled_jobs').insert({
+        manifest_id: manifestId,
+        automation_rule_id: rule.id,
+        scheduled_time: scheduledTime.toISOString(),
+        status: 'pending'
+      })
+    }
+    
+    console.log('Automated jobs scheduled successfully')
+  } catch (error) {
+    console.error('Error scheduling automated jobs:', error)
+  }
+}
 
 export default function CaptureManifest() {
   const [image, setImage] = useState(null)
@@ -179,7 +219,8 @@ export default function CaptureManifest() {
       state: {
         passengers: [],
         imageUrl: imagePreview,
-        extractedText: extractedText
+        extractedText: extractedText,
+        scheduleJobs: scheduleAutomatedJobs // Pass function to EditManifest
       }
     })
   }
@@ -394,7 +435,7 @@ export default function CaptureManifest() {
       {/* Skip Option */}
       <div className="mt-6 text-center">
         <button
-          onClick={() => navigate('/edit-manifest', { state: { passengers: [] } })}
+          onClick={() => navigate('/edit-manifest', { state: { passengers: [], scheduleJobs: scheduleAutomatedJobs } })}
           className="text-blue-600 hover:text-blue-800 underline font-medium"
         >
           Skip image capture and add passengers manually →
