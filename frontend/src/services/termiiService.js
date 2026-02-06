@@ -3,6 +3,13 @@ import { supabase } from './supabase'
 /**
  * Send SMS via Termii (using Supabase RPC)
  */
+
+export const scheduleBulkSMS = async (data) => {
+  // Add your implementation or a placeholder
+  console.log('Schedule SMS function called');
+  return { success: true };
+};
+
 export async function sendTermiiSMS(to, message, passengerId = null, recipientType = 'passenger') {
   try {
     console.log('Sending SMS via Termii to:', to)
