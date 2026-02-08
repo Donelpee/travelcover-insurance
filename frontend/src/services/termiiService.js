@@ -4,6 +4,44 @@ import { supabase } from './supabase'
  * Send SMS via Termii (using Supabase RPC)
  */
 
+export async function scheduleBulkSMS(passengers, manifestData, scheduledTime) {
+  // For now, just insert into scheduled_messages table
+  const results = {
+    scheduled: 0,
+    failed: 0,
+    total: passengers.length * 2
+  }
+
+  try {
+    for (const passenger of passengers) {
+      // Schedule passenger SMS
+      await supabase.from('scheduled_messages').insert({
+        recipient_phone: passenger.phone_number,
+        message_content: `Dear ${passenger.full_name}, safe journey from ${manifestData.departure} to ${manifestData.destination} with ${manifestData.company}. Trip: ${manifestData.trip_date}`,
+        scheduled_time: scheduledTime,
+        status: 'pending',
+        recipient_type: 'passenger'
+      })
+      results.scheduled++
+
+      // Schedule NOK SMS
+      await supabase.from('scheduled_messages').insert({
+        recipient_phone: passenger.next_of_kin_phone,
+        message_content: `Hello ${passenger.next_of_kin_name}, ${passenger.full_name} is traveling from ${manifestData.departure} to ${manifestData.destination}`,
+        scheduled_time: scheduledTime,
+        status: 'pending',
+        recipient_type: 'next_of_kin'
+      })
+      results.scheduled++
+    }
+
+    return results
+  } catch (error) {
+    console.error('Error scheduling SMS:', error)
+    throw error
+  }
+}
+
 export const scheduleBulkSMS = async (data) => {
   // Add your implementation or a placeholder
   console.log('Schedule SMS function called');
