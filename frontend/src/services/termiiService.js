@@ -1,11 +1,9 @@
 import { supabase } from './supabase'
 
 /**
- * Send SMS via Termii (using Supabase RPC)
+ * Schedule bulk SMS for later sending
  */
-
 export async function scheduleBulkSMS(passengers, manifestData, scheduledTime) {
-  // For now, just insert into scheduled_messages table
   const results = {
     scheduled: 0,
     failed: 0,
@@ -42,12 +40,9 @@ export async function scheduleBulkSMS(passengers, manifestData, scheduledTime) {
   }
 }
 
-export const scheduleBulkSMS = async (data) => {
-  // Add your implementation or a placeholder
-  console.log('Schedule SMS function called');
-  return { success: true };
-};
-
+/**
+ * Send single SMS via Termii (using Supabase RPC)
+ */
 export async function sendTermiiSMS(to, message, passengerId = null, recipientType = 'passenger') {
   try {
     console.log('Sending SMS via Termii to:', to)
@@ -80,7 +75,7 @@ export async function sendTermiiSMS(to, message, passengerId = null, recipientTy
 }
 
 /**
- * Send bulk SMS to passengers
+ * Send bulk SMS to passengers immediately
  */
 export async function sendBulkSMS(passengers, manifestData) {
   const results = {
@@ -93,7 +88,7 @@ export async function sendBulkSMS(passengers, manifestData) {
   for (const passenger of passengers) {
     // Send to passenger
     results.total++
-    const passengerMessage = `Dear ${passenger.full_name}, safe journey from ${manifestData.departure} to ${manifestData.destination} with ${manifestData.company}. Trip: ${new Date(manifestData.trip_date).toLocaleDateString()}. You are covered by TravelGuard Insurance. Emergency: +234 800 000 0000`
+    const passengerMessage = `Dear ${passenger.full_name}, safe journey from ${manifestData.departure} to ${manifestData.destination} with ${manifestData.company}. Trip: ${new Date(manifestData.trip_date).toLocaleDateString()}. You are covered by TravelCover Insurance. Emergency: +234 800 000 0000`
 
     const passengerResult = await sendTermiiSMS(
       passenger.phone_number,
