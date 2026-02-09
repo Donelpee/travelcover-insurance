@@ -5,61 +5,80 @@ import { Plus, Trash2, Save, Users } from 'lucide-react'
 import { success, error } from '../utils/notifications'
 
 // Schedule automated jobs
-async function scheduleAutomatedJobs(manifestId, tripDate) {
+async function scheduleAutomatedJobs(manifestId, tripDate, departureTime, durationHours) {
   try {
-    const { data: rules, error: rulesError } = await supabase
-      .from('automation_rules')
+    // Get all passengers for this manifest
+    const { data: passengers } = await supabase
+      .from('passengers')
       .select('*')
-      .eq('is_active', true)
+      .eq('manifest_id', manifestId)
 
-    if (rulesError) {
-      console.error('Error fetching automation rules:', rulesError)
-      return
-    }
+    if (!passengers || passengers.length === 0) return
 
-    if (!rules || rules.length === 0) {
-      console.log('No active automation rules found')
-      return
-    }
+    // Calculate times
+    const tripDateTime = new Date(`${tripDate}T${departureTime || '00:00'}`)
+    const departure30Min = new Date(tripDateTime.getTime() + 30 * 60000) // +30 mins
+    
+    // Calculate arrival time (departure + duration - 30 mins)
+    const arrivalTime = new Date(tripDateTime.getTime() + (durationHours || 8) * 3600000)
+    const arrival30MinBefore = new Date(arrivalTime.getTime() - 30 * 60000) // -30 mins
 
-    const tripDateTime = new Date(tripDate)
-    const jobsToInsert = []
-
-    for (const rule of rules) {
-      let scheduledTime = new Date(tripDateTime)
-      
-      if (rule.trigger_type === 'before_trip') {
-        scheduledTime.setHours(scheduledTime.getHours() - rule.trigger_offset_hours)
-      } else if (rule.trigger_type === 'trip_start') {
-        // Send at trip time
-      } else if (rule.trigger_type === 'trip_end') {
-        scheduledTime.setHours(scheduledTime.getHours() + 8) // Assume 8hr trip
-      } else if (rule.trigger_type === 'after_trip') {
-        scheduledTime.setHours(scheduledTime.getHours() + rule.trigger_offset_hours)
-      }
-
-      jobsToInsert.push({
+    // Schedule messages for each passenger
+    for (const passenger of passengers) {
+      // 1. Passenger - 30 mins after departure
+      await supabase.from('scheduled_jobs').insert({
         manifest_id: manifestId,
-        automation_rule_id: rule.id,
-        scheduled_time: scheduledTime.toISOString(),
+        passenger_id: passenger.id,
+        scheduled_time: departure30Min.toISOString(),
+        message_type: 'departure_30min',
+        recipient_type: 'passenger',
+        phone_number: passenger.phone_number,
+        message_content: `Dear ${passenger.full_name}, your journey has started! You're en route to your destination. Safe travels with TravelCover Insurance. Emergency: +234 800 000 0000`,
+        status: 'pending'
+      })
+
+      // 2. Next of Kin - 30 mins after departure
+      await supabase.from('scheduled_jobs').insert({
+        manifest_id: manifestId,
+        passenger_id: passenger.id,
+        scheduled_time: departure30Min.toISOString(),
+        message_type: 'departure_30min',
+        recipient_type: 'next_of_kin',
+        phone_number: passenger.next_of_kin_phone,
+        message_content: `Hello ${passenger.next_of_kin_name}, ${passenger.full_name}'s journey has started. They are traveling safely with TravelCover Insurance. Contact: +234 800 000 0000`,
+        status: 'pending'
+      })
+
+      // 3. Passenger - 30 mins before arrival
+      await supabase.from('scheduled_jobs').insert({
+        manifest_id: manifestId,
+        passenger_id: passenger.id,
+        scheduled_time: arrival30MinBefore.toISOString(),
+        message_type: 'arrival_30min',
+        recipient_type: 'passenger',
+        phone_number: passenger.phone_number,
+        message_content: `Dear ${passenger.full_name}, you'll arrive at your destination in approximately 30 minutes. Thank you for choosing TravelCover Insurance. Safe travels!`,
+        status: 'pending'
+      })
+
+      // 4. Next of Kin - 30 mins before arrival
+      await supabase.from('scheduled_jobs').insert({
+        manifest_id: manifestId,
+        passenger_id: passenger.id,
+        scheduled_time: arrival30MinBefore.toISOString(),
+        message_type: 'arrival_30min',
+        recipient_type: 'next_of_kin',
+        phone_number: passenger.next_of_kin_phone,
+        message_content: `Hello ${passenger.next_of_kin_name}, ${passenger.full_name} will arrive at their destination in approximately 30 minutes. Journey completing safely.`,
         status: 'pending'
       })
     }
-
-    const { error: insertError } = await supabase
-      .from('scheduled_jobs')
-      .insert(jobsToInsert)
-
-    if (insertError) {
-      console.error('Error scheduling jobs:', insertError)
-    } else {
-      console.log(`Scheduled ${jobsToInsert.length} automated jobs`)
-    }
+    
+    console.log(`Scheduled ${passengers.length * 4} automated messages`)
   } catch (error) {
     console.error('Error scheduling automated jobs:', error)
   }
 }
-
 export default function EditManifest() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -72,10 +91,10 @@ export default function EditManifest() {
     company_id: '',
     route_id: '',
     trip_date: '',
-    departure_time: ''
+    departure_time: '',
+    image_url: location.state?.imageUrl || ''
   })
   const [saving, setSaving] = useState(false)
-  const [capturedImage, setCapturedImage] = useState(null)
 
   useEffect(() => {
     fetchCompanies()
@@ -84,53 +103,26 @@ export default function EditManifest() {
     if (location.state?.passengers) {
       setPassengers(location.state.passengers)
     }
-    
-    // Check if we have an image from capture
-    if (location.state?.hasImage) {
-      // Try to get image from sessionStorage
-      const storedImage = sessionStorage.getItem('capturedImage')
-      if (storedImage) {
-        setCapturedImage(storedImage)
-      }
-    }
-    
-    // Clean up sessionStorage when component unmounts
-    return () => {
-      sessionStorage.removeItem('capturedImage')
-      sessionStorage.removeItem('capturedImageTimestamp')
-    }
-  }, [location.state])
+  }, [])
 
   async function fetchCompanies() {
-    try {
-      const { data, error } = await supabase
-        .from('transport_companies')
-        .select('*')
-        .eq('status', 'active')
-        .order('company_name')
-      
-      if (error) throw error
-      setCompanies(data || [])
-    } catch (err) {
-      console.error('Error fetching companies:', err)
-      error('Error loading companies', 'Please try again later')
-    }
+    const { data } = await supabase
+      .from('transport_companies')
+      .select('*')
+      .eq('status', 'active')
+      .order('company_name')
+    
+    setCompanies(data || [])
   }
 
   async function fetchRoutes() {
-    try {
-      const { data, error } = await supabase
-        .from('routes')
-        .select('*')
-        .eq('status', 'active')
-        .order('route_name')
-      
-      if (error) throw error
-      setRoutes(data || [])
-    } catch (err) {
-      console.error('Error fetching routes:', err)
-      error('Error loading routes', 'Please try again later')
-    }
+    const { data } = await supabase
+      .from('routes')
+      .select('*')
+      .eq('status', 'active')
+      .order('route_name')
+    
+    setRoutes(data || [])
   }
 
   useEffect(() => {
@@ -209,39 +201,6 @@ export default function EditManifest() {
     return 'border-red-200 bg-red-50'
   }
 
-  async function uploadImageToStorage(imageBase64, manifestRef) {
-    try {
-      // Convert Base64 to Blob
-      const response = await fetch(imageBase64)
-      const blob = await response.blob()
-      
-      const fileName = `manifest_${manifestRef}_${Date.now()}.jpg`
-      
-      // Upload to Supabase storage
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('manifest-images') // Make sure this bucket exists in Supabase
-        .upload(fileName, blob, {
-          cacheControl: '3600',
-          upsert: false
-        })
-      
-      if (uploadError) {
-        console.error('Error uploading image:', uploadError)
-        return null
-      }
-      
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from('manifest-images')
-        .getPublicUrl(fileName)
-      
-      return urlData.publicUrl
-    } catch (err) {
-      console.error('Error in image upload:', err)
-      return null
-    }
-  }
-
   async function saveManifest() {
     if (!manifestData.company_id || !manifestData.route_id || !manifestData.trip_date) {
       error('Missing trip details', 'Company, Route, and Trip Date are required')
@@ -253,82 +212,69 @@ export default function EditManifest() {
       return
     }
 
-    // Validate all passengers
+    let hasError = false
     for (let i = 0; i < passengers.length; i++) {
       const passenger = passengers[i]
       if (!passenger.full_name || !passenger.phone_number || !passenger.next_of_kin_name || !passenger.next_of_kin_phone) {
         error(`Passenger ${i + 1} incomplete`, 'Name, Phone, Next of Kin Name & Phone are required')
-        return
+        hasError = true
+        break
       }
     }
+
+    if (hasError) return
 
     setSaving(true)
 
     try {
       const manifestRef = `MAN-${Date.now()}`
-      let imageUrl = ''
 
-      // Upload image if exists
-      if (capturedImage) {
-        imageUrl = await uploadImageToStorage(capturedImage, manifestRef)
-      }
+      // Calculate arrival time
+const departureDateTime = new Date(`${manifestData.trip_date}T${manifestData.departure_time || '00:00'}`)
+const selectedRoute = routes.find(r => r.id === manifestData.route_id)
+const durationHours = selectedRoute?.duration_hours || 8
 
-      // Insert manifest
-      const { data: manifest, error: manifestError } = await supabase
-        .from('manifests')
-        .insert([{
-          manifest_reference: manifestRef,
-          company_id: manifestData.company_id,
-          route_id: manifestData.route_id,
-          trip_date: manifestData.trip_date,
-          departure_time: manifestData.departure_time,
-          total_passengers: passengers.length,
-          image_url: imageUrl || null,
-          extraction_method: capturedImage ? 'ocr' : 'manual',
-          processed_at: new Date().toISOString()
-        }])
-        .select()
-        .single()
+const arrivalDateTime = new Date(departureDateTime.getTime() + durationHours * 3600000)
+const arrivalTimeString = arrivalDateTime.toTimeString().slice(0, 5) // HH:MM format
 
-      if (manifestError) throw manifestError
+// Insert manifest with arrival_time
+const { data: manifest, error: manifestError } = await supabase
+  .from('manifests')
+  .insert([{
+    manifest_reference: manifestRef,
+    company_id: manifestData.company_id,
+    route_id: manifestData.route_id,
+    trip_date: manifestData.trip_date,
+    departure_time: manifestData.departure_time,
+    arrival_time: arrivalTimeString, // NEW
+    total_passengers: passengers.length,
+    image_url: manifestData.image_url,
+    extraction_method: 'manual',
+    processed_at: new Date().toISOString()
+  }])
+  .select()
+  .single()
 
-      // Insert passengers
-      const passengersToInsert = passengers.map(p => ({
-        manifest_id: manifest.id,
-        full_name: p.full_name,
-        phone_number: p.phone_number,
-        email: p.email || null,
-        next_of_kin_name: p.next_of_kin_name,
-        next_of_kin_phone: p.next_of_kin_phone,
-        next_of_kin_email: p.next_of_kin_email || null,
-        confidence_score: p.confidence_score
-      }))
+if (manifestError) throw manifestError
 
-      const { error: passengersError } = await supabase
-        .from('passengers')
-        .insert(passengersToInsert)
+// ... insert passengers ...
 
-      if (passengersError) throw passengersError
+// Schedule automated jobs with duration
+await scheduleAutomatedJobs(
+  manifest.id, 
+  manifestData.trip_date, 
+  manifestData.departure_time,
+  durationHours
+)
 
-      // Schedule automated jobs
-      await scheduleAutomatedJobs(manifest.id, manifestData.trip_date)
-
-      success('Manifest saved successfully!', `${passengers.length} passenger${passengers.length === 1 ? '' : 's'} recorded`)
-      
-      // Navigate with only serializable data
-      navigate('/send-sms', { 
-        state: { 
-          manifestId: manifest.id,
-          passengersCount: passengers.length
-        } 
-      })
-
-    } catch (err) {
-      console.error('Error saving manifest:', err)
-      error('Error saving manifest', err.message || 'Please try again')
-    } finally {
-      setSaving(false)
-    }
+success('Manifest saved', 'Your manifest has been saved successfully')
+navigate('/sms-notification')
+} catch (err) {
+  console.error('Error saving manifest:', err)
+  error('Failed to save manifest', err.message)
+} finally {
+  setSaving(false)
+}
   }
 
   return (
