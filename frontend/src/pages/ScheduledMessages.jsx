@@ -14,23 +14,10 @@ export default function ScheduledMessages() {
 
   async function fetchScheduledMessages() {
     try {
-      const { data, error: fetchError } = await supabase
-        .from('scheduled_sms')
-        .select(`
-          *,
-          passengers (
-            full_name,
-            manifests (
-              manifest_reference,
-              trip_date,
-              transport_companies (company_name),
-              routes (departure_location, destination)
-            )
-          ),
-          sms_schedule_rules (rule_name)
-        `)
-        .order('scheduled_time', { ascending: true })
-        .limit(500)
+     const { data } = await supabase
+  .from('scheduled_jobs')  // ← Change from scheduled_messages
+  .select('*')
+  .order('scheduled_time', { ascending: true })
 
       if (fetchError) throw fetchError
       setMessages(data || [])

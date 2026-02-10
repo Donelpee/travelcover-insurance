@@ -13,22 +13,26 @@ export async function scheduleBulkSMS(passengers, manifestData, scheduledTime) {
   try {
     for (const passenger of passengers) {
       // Schedule passenger SMS
-      await supabase.from('scheduled_messages').insert({
+      await supabase.from('scheduled_jobs').insert({  // ← CHECK THIS LINE
         recipient_phone: passenger.phone_number,
         message_content: `Dear ${passenger.full_name}, safe journey from ${manifestData.departure} to ${manifestData.destination} with ${manifestData.company}. Trip: ${manifestData.trip_date}`,
         scheduled_time: scheduledTime,
         status: 'pending',
-        recipient_type: 'passenger'
+        recipient_type: 'passenger',
+        phone_number: passenger.phone_number,
+        passenger_id: passenger.id
       })
       results.scheduled++
 
       // Schedule NOK SMS
-      await supabase.from('scheduled_messages').insert({
+      await supabase.from('scheduled_jobs').insert({  // ← CHECK THIS LINE
         recipient_phone: passenger.next_of_kin_phone,
         message_content: `Hello ${passenger.next_of_kin_name}, ${passenger.full_name} is traveling from ${manifestData.departure} to ${manifestData.destination}`,
         scheduled_time: scheduledTime,
         status: 'pending',
-        recipient_type: 'next_of_kin'
+        recipient_type: 'next_of_kin',
+        phone_number: passenger.next_of_kin_phone,
+        passenger_id: passenger.id
       })
       results.scheduled++
     }
@@ -39,7 +43,6 @@ export async function scheduleBulkSMS(passengers, manifestData, scheduledTime) {
     throw error
   }
 }
-
 /**
  * Send single SMS via Termii (using Supabase RPC)
  */
