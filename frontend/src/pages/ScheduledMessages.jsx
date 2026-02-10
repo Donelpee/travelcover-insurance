@@ -14,9 +14,26 @@ export default function ScheduledMessages() {
 
   async function fetchScheduledMessages() {
   try {
-    const { data, error: fetchError } = await supabase  // ← Add error destructuring
+    const { data, error: fetchError } = await supabase
       .from('scheduled_jobs')
-      .select('*')
+      .select(`
+        *,
+        passengers (
+          id,
+          full_name,
+          phone_number,
+          manifest_id,
+          manifests (
+            id,
+            manifest_reference,
+            trip_date,
+            routes (
+              departure_location,
+              destination
+            )
+          )
+        )
+      `)
       .order('scheduled_time', { ascending: true })
 
     if (fetchError) throw fetchError
@@ -24,6 +41,7 @@ export default function ScheduledMessages() {
     setLoading(false)
   } catch (err) {
     console.error('Error fetching scheduled messages:', err)
+    error('Failed to load scheduled messages', err.message)
     setLoading(false)
   }
 }
@@ -175,13 +193,19 @@ export default function ScheduledMessages() {
                     </div>
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-500">
-                    <div>
-                      <p className="font-medium">{msg.passengers?.manifests?.manifest_reference}</p>
-                      <p className="text-xs text-gray-400">
-                        {msg.passengers?.manifests?.routes?.departure_location} → {msg.passengers?.manifests?.routes?.destination}
-                      </p>
-                    </div>
-                  </td>
+  <div>
+    <p className="font-medium">{msg.passengers?.manifests?.manifest_reference || 'N/A'}</p>
+    <p className="text-xs text-gray-400">
+      {msg.passengers?.manifests?.routes?.departure_location} → {msg.passengers?.manifests?.routes?.destination}
+    </p>
+  </div>
+</td>
+<td className="px-6 py-4 text-sm">
+  <div>
+    <p className="font-medium">{msg.passengers?.full_name || 'N/A'}</p>
+    <p className="text-xs text-gray-500">{msg.phone_number}</p>
+  </div>
+</td>
                   <td className="px-6 py-4 text-sm">
                     <div>
                       <p className="font-medium">{msg.passengers?.full_name}</p>

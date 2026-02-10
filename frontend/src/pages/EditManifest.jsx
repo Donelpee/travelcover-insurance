@@ -268,7 +268,7 @@ await scheduleAutomatedJobs(
 )
 
 success('Manifest saved', 'Your manifest has been saved successfully')
-navigate('/sms-notification')
+navigate('/send-sms', { state: { manifestId: manifest.id } })
 } catch (err) {
   console.error('Error saving manifest:', err)
   error('Failed to save manifest', err.message)
