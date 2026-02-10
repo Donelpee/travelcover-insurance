@@ -41,46 +41,47 @@ export default function SendSMS() {
   }, [])
 
   async function fetchManifestData(manifestId) {
-    try {
-      const { data: manifestData, error: manifestError } = await supabase
-        .from('manifests')
-        .select(`
-          *,
-          transport_companies (company_name),
-          routes (route_name, departure_location, destination, duration_hours)
-        `)
-        .eq('id', manifestId)
-        .single()
+  try {
+    const { data: manifestData, error: manifestError } = await supabase
+      .from('manifests')
+      .select(`
+        *,
+        transport_companies (company_name),
+        routes (route_name, departure_location, destination, duration_hours)
+      `)
+      .eq('id', manifestId)
+      .single()
 
-      if (manifestError) throw manifestError
+    if (manifestError) throw manifestError
 
-      setManifest(manifestData)
-      setCompany(manifestData.transport_companies)
-      setRoute(manifestData.routes)
+    setManifest(manifestData)
+    setCompany(manifestData.transport_companies)
+    setRoute(manifestData.routes)
 
-      const { data: passengersData, error: passengersError } = await supabase
-        .from('passengers')
-        .select('*')
-        .eq('manifest_id', manifestId)
+    const { data: passengersData, error: passengersError } = await supabase
+      .from('passengers')
+      .select('*')
+      .eq('manifest_id', manifestId)
 
-      if (passengersError) throw passengersError
+    if (passengersError) throw passengersError
 
-      setPassengers(passengersData || [])
+    setPassengers(passengersData || [])
 
-      const templates = await getActiveTemplates()
-      setEmailTemplates(templates)
-      if (templates.length > 0) {
-        setSelectedTemplateId(templates[0].id)
-      }
-
-      setLoading(false)
-
-    } catch (err) {
-      console.error('Error fetching manifest:', err)
-      errorToast('Error loading manifest', err.message)
-      navigate('/capture-manifest')
+    const templates = await getActiveTemplates()
+    setEmailTemplates(templates)
+    if (templates.length > 0) {
+      setSelectedTemplateId(templates[0].id)
     }
+
+    setLoading(false)
+
+  } catch (err) {
+    console.error('Error fetching manifest:', err)
+    errorToast('Error loading manifest', err.message)
+    // Don't navigate away - show the error
+    setLoading(false)
   }
+}
 
   async function handleSendSMS() {
     if (sendOption === 'scheduled') {
