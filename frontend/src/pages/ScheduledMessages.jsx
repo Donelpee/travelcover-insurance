@@ -13,37 +13,37 @@ export default function ScheduledMessages() {
   }, [])
 
   async function fetchScheduledMessages() {
-    try {
-     const { data } = await supabase
-  .from('scheduled_jobs')  // ← Change from scheduled_messages
-  .select('*')
-  .order('scheduled_time', { ascending: true })
+  try {
+    const { data, error: fetchError } = await supabase  // ← Add error destructuring
+      .from('scheduled_jobs')
+      .select('*')
+      .order('scheduled_time', { ascending: true })
 
-      if (fetchError) throw fetchError
-      setMessages(data || [])
-      setLoading(false)
-    } catch (err) {
-      console.error('Error fetching scheduled messages:', err)
-      setLoading(false)
-    }
+    if (fetchError) throw fetchError
+    setMessages(data || [])
+    setLoading(false)
+  } catch (err) {
+    console.error('Error fetching scheduled messages:', err)
+    setLoading(false)
   }
+}
 
   async function cancelMessage(id) {
-    if (!window.confirm('Cancel this scheduled message?')) return
+  if (!window.confirm('Cancel this scheduled message?')) return
 
-    try {
-      const { error: updateError } = await supabase
-        .from('scheduled_sms')
-        .update({ status: 'cancelled' })
-        .eq('id', id)
+  try {
+    const { error: updateError } = await supabase
+      .from('scheduled_jobs')  // ← Change from scheduled_sms
+      .update({ status: 'cancelled' })
+      .eq('id', id)
 
-      if (updateError) throw updateError
-      success('Message cancelled!')
-      fetchScheduledMessages()
-    } catch (err) {
-      error('Error cancelling message', err.message)
-    }
+    if (updateError) throw updateError
+    success('Message cancelled!')
+    fetchScheduledMessages()
+  } catch (err) {
+    error('Error cancelling message', err.message)
   }
+}
 
   const filteredMessages = messages.filter(msg => {
     if (filter === 'all') return true
