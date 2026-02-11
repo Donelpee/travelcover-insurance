@@ -201,12 +201,12 @@ export default function EditManifest() {
     return 'border-red-200 bg-red-50'
   }
 
-  async function saveManifest() {
-  if (!manifestData.company_id || !manifestData.route_id || !manifestData.trip_date) {
+  async function saveManifest() { 
+  if (!manifestData.company_id || !manifestData.route_id || !manifestData.trip_date) { 
     error('Missing trip details', 'Company, Route, and Trip Date are required')
     return
   }
-
+  
   if (passengers.length === 0) {
     error('No passengers added', 'Please add at least one passenger')
     return
@@ -305,8 +305,8 @@ export default function EditManifest() {
   } finally {
     setSaving(false)
   }
-}
-  }
+}}
+  
 
   return (
     <div>
