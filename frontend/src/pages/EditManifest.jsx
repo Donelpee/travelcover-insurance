@@ -202,78 +202,109 @@ export default function EditManifest() {
   }
 
   async function saveManifest() {
-    if (!manifestData.company_id || !manifestData.route_id || !manifestData.trip_date) {
-      error('Missing trip details', 'Company, Route, and Trip Date are required')
-      return
+  if (!manifestData.company_id || !manifestData.route_id || !manifestData.trip_date) {
+    error('Missing trip details', 'Company, Route, and Trip Date are required')
+    return
+  }
+
+  if (passengers.length === 0) {
+    error('No passengers added', 'Please add at least one passenger')
+    return
+  }
+
+  let hasError = false
+  for (let i = 0; i < passengers.length; i++) {
+    const passenger = passengers[i]
+    if (!passenger.full_name || !passenger.phone_number || !passenger.next_of_kin_name || !passenger.next_of_kin_phone) {
+      error(`Passenger ${i + 1} incomplete`, 'Name, Phone, Next of Kin Name & Phone are required')
+      hasError = true
+      break
+    }
+  }
+
+  if (hasError) return
+
+  setSaving(true)
+
+  try {
+    const manifestRef = `MAN-${Date.now()}`
+
+    console.log('=== SAVING MANIFEST ===')
+    console.log('Manifest Data:', manifestData)
+
+    const departureDateTime = new Date(`${manifestData.trip_date}T${manifestData.departure_time || '00:00'}`)
+    const selectedRoute = routes.find(r => r.id === manifestData.route_id)
+    const durationHours = selectedRoute?.duration_hours || 8
+
+    const arrivalDateTime = new Date(departureDateTime.getTime() + durationHours * 3600000)
+    const arrivalTimeString = arrivalDateTime.toTimeString().slice(0, 5)
+
+    const { data: manifest, error: manifestError } = await supabase
+      .from('manifests')
+      .insert([{
+        manifest_reference: manifestRef,
+        company_id: manifestData.company_id,
+        route_id: manifestData.route_id,
+        trip_date: manifestData.trip_date,
+        departure_time: manifestData.departure_time,
+        arrival_time: arrivalTimeString,
+        total_passengers: passengers.length,
+        image_url: manifestData.image_url,
+        extraction_method: 'manual',
+        processed_at: new Date().toISOString()
+      }])
+      .select()
+      .single()
+
+    if (manifestError) {
+      console.error('Manifest Insert Error:', manifestError)
+      throw manifestError
     }
 
-    if (passengers.length === 0) {
-      error('No passengers added', 'Please add at least one passenger')
-      return
+    console.log('✅ Manifest saved:', manifest.id)
+    console.log('=== SAVING PASSENGERS ===')
+    console.log('Passengers to insert:', passengers)
+
+    const passengersToInsert = passengers.map(p => ({
+      manifest_id: manifest.id,
+      full_name: p.full_name,
+      phone_number: p.phone_number,
+      email: p.email || null,
+      next_of_kin_name: p.next_of_kin_name,
+      next_of_kin_phone: p.next_of_kin_phone,
+      next_of_kin_email: p.next_of_kin_email || null,
+      confidence_score: p.confidence_score
+    }))
+
+    console.log('Passengers payload:', passengersToInsert)
+
+    const { data: insertedPassengers, error: passengersError } = await supabase
+      .from('passengers')
+      .insert(passengersToInsert)
+      .select()
+
+    if (passengersError) {
+      console.error('❌ PASSENGERS INSERT ERROR:', passengersError)
+      throw passengersError
     }
 
-    let hasError = false
-    for (let i = 0; i < passengers.length; i++) {
-      const passenger = passengers[i]
-      if (!passenger.full_name || !passenger.phone_number || !passenger.next_of_kin_name || !passenger.next_of_kin_phone) {
-        error(`Passenger ${i + 1} incomplete`, 'Name, Phone, Next of Kin Name & Phone are required')
-        hasError = true
-        break
-      }
-    }
+    console.log('✅ Passengers saved:', insertedPassengers.length)
+    console.log('=== SCHEDULING JOBS ===')
 
-    if (hasError) return
+    await scheduleAutomatedJobs(manifest.id, manifestData.trip_date, manifestData.departure_time, durationHours)
 
-    setSaving(true)
+    console.log('✅ All done!')
 
-    try {
-      const manifestRef = `MAN-${Date.now()}`
+    success('Manifest saved successfully!', `${passengers.length} passenger${passengers.length === 1 ? '' : 's'} recorded`)
+    
+    navigate('/send-sms', { state: { manifestId: manifest.id } })
 
-      // Calculate arrival time
-const departureDateTime = new Date(`${manifestData.trip_date}T${manifestData.departure_time || '00:00'}`)
-const selectedRoute = routes.find(r => r.id === manifestData.route_id)
-const durationHours = selectedRoute?.duration_hours || 8
-
-const arrivalDateTime = new Date(departureDateTime.getTime() + durationHours * 3600000)
-const arrivalTimeString = arrivalDateTime.toTimeString().slice(0, 5) // HH:MM format
-
-// Insert manifest with arrival_time
-const { data: manifest, error: manifestError } = await supabase
-  .from('manifests')
-  .insert([{
-    manifest_reference: manifestRef,
-    company_id: manifestData.company_id,
-    route_id: manifestData.route_id,
-    trip_date: manifestData.trip_date,
-    departure_time: manifestData.departure_time,
-    arrival_time: arrivalTimeString, // NEW
-    total_passengers: passengers.length,
-    image_url: manifestData.image_url,
-    extraction_method: 'manual',
-    processed_at: new Date().toISOString()
-  }])
-  .select()
-  .single()
-
-if (manifestError) throw manifestError
-
-// ... insert passengers ...
-
-// Schedule automated jobs with duration
-await scheduleAutomatedJobs(
-  manifest.id, 
-  manifestData.trip_date, 
-  manifestData.departure_time,
-  durationHours
-)
-
-success('Manifest saved', 'Your manifest has been saved successfully')
-navigate('/send-sms', { state: { manifestId: manifest.id } })
-} catch (err) {
-  console.error('Error saving manifest:', err)
-  error('Failed to save manifest', err.message)
-} finally {
-  setSaving(false)
+  } catch (err) {
+    console.error('❌ SAVE MANIFEST ERROR:', err)
+    error('Error saving manifest', err.message)
+  } finally {
+    setSaving(false)
+  }
 }
   }
 
@@ -522,4 +553,3 @@ navigate('/send-sms', { state: { manifestId: manifest.id } })
       </div>
     </div>
   )
-}
