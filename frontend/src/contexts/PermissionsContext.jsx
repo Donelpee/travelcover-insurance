@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react'
+import { createContext, useContext, useState, useEffect, useRef } from 'react'
 import { supabase } from '../services/supabase'
 
 const PermissionsContext = createContext()
@@ -10,10 +10,29 @@ export function PermissionsProvider({ children }) {
   const [isSignedOut, setIsSignedOut] = useState(false)
   const [cachedUser, setCachedUser] = useState(null)
   const [cachedPermissions, setCachedPermissions] = useState([])
+  const skipNextAutoLoadRef = useRef(false)
+
+  const CACHE_KEY = 'travelcover_cached_session'
+
+  const FALLBACK_USER = {
+    id: 'local-admin',
+    full_name: 'Admin User',
+    email: 'admin@travelcover.local',
+    role: 'super_admin',
+    roles: {
+      role_name: 'super_admin',
+      role_permissions: []
+    }
+  }
 
   useEffect(() => {
     // In a real app, you'd get this from authentication
     // For now, we'll simulate with a Super Admin
+    if (skipNextAutoLoadRef.current) {
+      skipNextAutoLoadRef.current = false
+      return
+    }
+
     if (!isSignedOut) {
       loadUserPermissions()
     }
@@ -23,7 +42,7 @@ export function PermissionsProvider({ children }) {
     try {
       // TODO: Replace with actual logged-in user ID
       // For now, let's just get the first Super Admin user
-      const { data: users } = await supabase
+      const { data: users, error: fetchError } = await supabase
         .from('app_users')
         .select(`
           *,
@@ -36,22 +55,51 @@ export function PermissionsProvider({ children }) {
           )
         `)
         .limit(1)
-        .single()
 
-      if (users) {
-        setCurrentUser(users)
+      if (fetchError) {
+        throw fetchError
+      }
+
+      const user = Array.isArray(users) ? users[0] : null
+
+      if (user) {
+        setCurrentUser(user)
         
         // Extract permission keys
-        const userPermissions = users.roles?.role_permissions?.map(
+        const userPermissions = user.roles?.role_permissions?.map(
           rp => rp.permissions.permission_key
         ) || []
         
         setPermissions(userPermissions)
+        setCachedUser(users)
+        setCachedPermissions(userPermissions)
+
+        localStorage.setItem(CACHE_KEY, JSON.stringify({
+          user,
+          permissions: userPermissions
+        }))
+      } else {
+        setCurrentUser(FALLBACK_USER)
+        setPermissions([])
+        setCachedUser(FALLBACK_USER)
+        setCachedPermissions([])
+        localStorage.setItem(CACHE_KEY, JSON.stringify({
+          user: FALLBACK_USER,
+          permissions: []
+        }))
       }
       
       setLoading(false)
     } catch (error) {
       console.error('Error loading permissions:', error)
+      setCurrentUser(FALLBACK_USER)
+      setPermissions([])
+      setCachedUser(FALLBACK_USER)
+      setCachedPermissions([])
+      localStorage.setItem(CACHE_KEY, JSON.stringify({
+        user: FALLBACK_USER,
+        permissions: []
+      }))
       setLoading(false)
     }
   }
@@ -69,8 +117,15 @@ export function PermissionsProvider({ children }) {
   }
 
   async function signOut() {
-    setCachedUser(currentUser)
-    setCachedPermissions(permissions)
+    if (currentUser) {
+      setCachedUser(currentUser)
+      setCachedPermissions(permissions)
+
+      localStorage.setItem(CACHE_KEY, JSON.stringify({
+        user: currentUser,
+        permissions
+      }))
+    }
 
     try {
       await supabase.auth.signOut()
@@ -87,12 +142,30 @@ export function PermissionsProvider({ children }) {
     if (cachedUser) {
       setCurrentUser(cachedUser)
       setPermissions(cachedPermissions)
+      skipNextAutoLoadRef.current = true
       setIsSignedOut(false)
       return
     }
 
+    const persistedCache = localStorage.getItem(CACHE_KEY)
+    if (persistedCache) {
+      try {
+        const parsed = JSON.parse(persistedCache)
+        if (parsed?.user) {
+          setCachedUser(parsed.user)
+          setCachedPermissions(parsed.permissions || [])
+          setCurrentUser(parsed.user)
+          setPermissions(parsed.permissions || [])
+          skipNextAutoLoadRef.current = true
+          setIsSignedOut(false)
+          return
+        }
+      } catch (error) {
+        console.error('Failed to parse cached session:', error)
+      }
+    }
+
     setIsSignedOut(false)
-    await loadUserPermissions()
   }
 
   return (
