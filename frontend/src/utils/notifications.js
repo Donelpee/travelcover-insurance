@@ -1,3 +1,4 @@
+import React from 'react'
 import toast from 'react-hot-toast'
 
 // Success notification
@@ -34,14 +35,65 @@ export const info = (message, description = '') => {
   })
 }
 
-// Confirmation dialog
-export const confirm = (message, onConfirm, onCancel = () => {}) => {
-  // Use browser confirm for now (we can upgrade later)
-  if (window.confirm(message)) {
-    onConfirm()
-  } else {
-    onCancel()
-  }
+// Confirmation toast (returns Promise<boolean>)
+export const confirm = (message, options = {}) => {
+  const {
+    confirmText = 'Confirm',
+    cancelText = 'Cancel',
+    duration = 8000
+  } = options
+
+  return new Promise((resolve) => {
+    let settled = false
+
+    const resolveOnce = (value) => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+
+    const toastId = toast.custom((toastInstance) =>
+      React.createElement(
+        'div',
+        {
+          className: 'w-[360px] max-w-full rounded-xl border border-slate-200 bg-white p-4 shadow-lg'
+        },
+        React.createElement('p', { className: 'text-sm text-slate-700 mb-3' }, message),
+        React.createElement(
+          'div',
+          { className: 'flex justify-end gap-2' },
+          React.createElement(
+            'button',
+            {
+              className: 'rounded-md border border-slate-200 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50',
+              onClick: () => {
+                toast.dismiss(toastInstance.id)
+                resolveOnce(false)
+              }
+            },
+            cancelText
+          ),
+          React.createElement(
+            'button',
+            {
+              className: 'rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700',
+              onClick: () => {
+                toast.dismiss(toastInstance.id)
+                resolveOnce(true)
+              }
+            },
+            confirmText
+          )
+        )
+      ),
+      { duration }
+    )
+
+    setTimeout(() => {
+      toast.dismiss(toastId)
+      resolveOnce(false)
+    }, duration + 200)
+  })
 }
 
 // Loading toast

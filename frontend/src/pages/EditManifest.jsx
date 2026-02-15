@@ -2,83 +2,8 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { Plus, Trash2, Save, Users } from 'lucide-react'
-import { success, error } from '../utils/notifications'
-
-// Schedule automated jobs
-async function scheduleAutomatedJobs(manifestId, tripDate, departureTime, durationHours) {
-  try {
-    // Get all passengers for this manifest
-    const { data: passengers } = await supabase
-      .from('passengers')
-      .select('*')
-      .eq('manifest_id', manifestId)
-
-    if (!passengers || passengers.length === 0) return
-
-    // Calculate times
-    const tripDateTime = new Date(`${tripDate}T${departureTime || '00:00'}`)
-    const departure30Min = new Date(tripDateTime.getTime() + 30 * 60000) // +30 mins
-    
-    // Calculate arrival time (departure + duration - 30 mins)
-    const arrivalTime = new Date(tripDateTime.getTime() + (durationHours || 8) * 3600000)
-    const arrival30MinBefore = new Date(arrivalTime.getTime() - 30 * 60000) // -30 mins
-
-    // Schedule messages for each passenger
-    for (const passenger of passengers) {
-      // 1. Passenger - 30 mins after departure
-      await supabase.from('scheduled_jobs').insert({
-        manifest_id: manifestId,
-        passenger_id: passenger.id,
-        scheduled_time: departure30Min.toISOString(),
-        message_type: 'departure_30min',
-        recipient_type: 'passenger',
-        phone_number: passenger.phone_number,
-        message_content: `Dear ${passenger.full_name}, your journey has started! You're en route to your destination. Safe travels with TravelCover Insurance. Emergency: +234 800 000 0000`,
-        status: 'pending'
-      })
-
-      // 2. Next of Kin - 30 mins after departure
-      await supabase.from('scheduled_jobs').insert({
-        manifest_id: manifestId,
-        passenger_id: passenger.id,
-        scheduled_time: departure30Min.toISOString(),
-        message_type: 'departure_30min',
-        recipient_type: 'next_of_kin',
-        phone_number: passenger.next_of_kin_phone,
-        message_content: `Hello ${passenger.next_of_kin_name}, ${passenger.full_name}'s journey has started. They are traveling safely with TravelCover Insurance. Contact: +234 800 000 0000`,
-        status: 'pending'
-      })
-
-      // 3. Passenger - 30 mins before arrival
-      await supabase.from('scheduled_jobs').insert({
-        manifest_id: manifestId,
-        passenger_id: passenger.id,
-        scheduled_time: arrival30MinBefore.toISOString(),
-        message_type: 'arrival_30min',
-        recipient_type: 'passenger',
-        phone_number: passenger.phone_number,
-        message_content: `Dear ${passenger.full_name}, you'll arrive at your destination in approximately 30 minutes. Thank you for choosing TravelCover Insurance. Safe travels!`,
-        status: 'pending'
-      })
-
-      // 4. Next of Kin - 30 mins before arrival
-      await supabase.from('scheduled_jobs').insert({
-        manifest_id: manifestId,
-        passenger_id: passenger.id,
-        scheduled_time: arrival30MinBefore.toISOString(),
-        message_type: 'arrival_30min',
-        recipient_type: 'next_of_kin',
-        phone_number: passenger.next_of_kin_phone,
-        message_content: `Hello ${passenger.next_of_kin_name}, ${passenger.full_name} will arrive at their destination in approximately 30 minutes. Journey completing safely.`,
-        status: 'pending'
-      })
-    }
-    
-    console.log(`Scheduled ${passengers.length * 4} automated messages`)
-  } catch (error) {
-    console.error('Error scheduling automated jobs:', error)
-  }
-}
+import { success, error, warning, confirm as confirmToast } from '../utils/notifications'
+import { enqueueManifestRuleNotifications } from '../services/notificationService'
 
 export default function EditManifest() {
   const navigate = useNavigate()
@@ -96,13 +21,24 @@ export default function EditManifest() {
     image_url: location.state?.imageUrl || ''
   })
   const [saving, setSaving] = useState(false)
+  const [bulkAddCount, setBulkAddCount] = useState('5')
 
   useEffect(() => {
     fetchCompanies()
     fetchRoutes()
     
-    if (location.state?.passengers) {
-      setPassengers(location.state.passengers)
+    if (location.state?.passengers?.length) {
+      const normalizedPassengers = location.state.passengers.map((passenger) => ({
+        id: crypto.randomUUID(),
+        full_name: passenger.full_name || '',
+        phone_number: passenger.phone_number || '',
+        email: passenger.email || '',
+        next_of_kin_name: passenger.next_of_kin_name || '',
+        next_of_kin_phone: passenger.next_of_kin_phone || '',
+        next_of_kin_email: passenger.next_of_kin_email || '',
+        confidence_score: passenger.confidence_score || 85
+      }))
+      setPassengers(normalizedPassengers)
     }
   }, [])
 
@@ -165,29 +101,36 @@ export default function EditManifest() {
   }
 
   function addMultiplePassengers() {
-    const count = prompt('How many passengers do you want to add?', '5')
-    if (count && !isNaN(count) && count > 0) {
-      const newPassengers = []
-      for (let i = 0; i < parseInt(count); i++) {
-        newPassengers.push({
-          id: crypto.randomUUID(),
-          full_name: '',
-          phone_number: '',
-          email: '',
-          next_of_kin_name: '',
-          next_of_kin_phone: '',
-          next_of_kin_email: '',
-          confidence_score: 100
-        })
-      }
-      setPassengers([...passengers, ...newPassengers])
+    const count = Number.parseInt(String(bulkAddCount), 10)
+
+    if (!Number.isInteger(count) || count <= 0 || count > 100) {
+      error('Invalid count', 'Enter a number between 1 and 100')
+      return
     }
+
+    const newPassengers = []
+    for (let i = 0; i < count; i++) {
+      newPassengers.push({
+        id: crypto.randomUUID(),
+        full_name: '',
+        phone_number: '',
+        email: '',
+        next_of_kin_name: '',
+        next_of_kin_phone: '',
+        next_of_kin_email: '',
+        confidence_score: 100
+      })
+    }
+    setPassengers([...passengers, ...newPassengers])
+    success('Passengers added', `${count} empty passenger row${count === 1 ? '' : 's'} created`)
   }
 
-  function deletePassenger(index) {
-    if (window.confirm('Remove this passenger?')) {
-      setPassengers(passengers.filter((_, i) => i !== index))
+  async function deletePassenger(index) {
+    if (!(await confirmToast('Remove this passenger?', { confirmText: 'Remove' }))) {
+      return
     }
+
+    setPassengers(passengers.filter((_, i) => i !== index))
   }
 
   function updatePassenger(index, field, value) {
@@ -213,11 +156,32 @@ export default function EditManifest() {
       return
     }
 
+    const isValidPhone = (value) => /^\+?[0-9\s()-]{8,20}$/.test((value || '').trim())
+    const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((value || '').trim())
+
     let hasError = false
     for (let i = 0; i < passengers.length; i++) {
       const passenger = passengers[i]
-      if (!passenger.full_name || !passenger.phone_number || !passenger.next_of_kin_name || !passenger.next_of_kin_phone) {
+      if (!passenger.full_name?.trim() || !passenger.phone_number?.trim() || !passenger.next_of_kin_name?.trim() || !passenger.next_of_kin_phone?.trim()) {
         error(`Passenger ${i + 1} incomplete`, 'Name, Phone, Next of Kin Name & Phone are required')
+        hasError = true
+        break
+      }
+
+      if (!isValidPhone(passenger.phone_number) || !isValidPhone(passenger.next_of_kin_phone)) {
+        error(`Passenger ${i + 1} invalid phone`, 'Use a valid phone number for passenger and next of kin')
+        hasError = true
+        break
+      }
+
+      if (passenger.email && !isValidEmail(passenger.email)) {
+        error(`Passenger ${i + 1} invalid email`, 'Passenger email format is invalid')
+        hasError = true
+        break
+      }
+
+      if (passenger.next_of_kin_email && !isValidEmail(passenger.next_of_kin_email)) {
+        error(`Passenger ${i + 1} invalid NOK email`, 'Next of kin email format is invalid')
         hasError = true
         break
       }
@@ -268,12 +232,12 @@ export default function EditManifest() {
 
       const passengersToInsert = passengers.map(p => ({
         manifest_id: manifest.id,
-        full_name: p.full_name,
-        phone_number: p.phone_number,
-        email: p.email || null,
-        next_of_kin_name: p.next_of_kin_name,
-        next_of_kin_phone: p.next_of_kin_phone,
-        next_of_kin_email: p.next_of_kin_email || null,
+        full_name: p.full_name.trim(),
+        phone_number: p.phone_number.trim(),
+        email: p.email?.trim() || null,
+        next_of_kin_name: p.next_of_kin_name.trim(),
+        next_of_kin_phone: p.next_of_kin_phone.trim(),
+        next_of_kin_email: p.next_of_kin_email?.trim() || null,
         confidence_score: p.confidence_score
       }))
 
@@ -292,7 +256,22 @@ export default function EditManifest() {
       console.log('✅ Passengers saved:', insertedPassengers.length)
       console.log('=== SCHEDULING JOBS ===')
 
-      await scheduleAutomatedJobs(manifest.id, manifestData.trip_date, manifestData.departure_time, durationHours)
+      const selectedCompany = companies.find(c => c.id === manifestData.company_id)
+      const { schedulingResult } = await enqueueManifestRuleNotifications({
+        manifest: {
+          ...manifest,
+          company_id: manifestData.company_id,
+          route_id: manifestData.route_id,
+          company_name: selectedCompany?.company_name
+        },
+        passengers: insertedPassengers,
+        route: selectedRoute,
+        company: selectedCompany
+      })
+
+      if ((schedulingResult?.count || 0) === 0) {
+        warning('Manifest saved, but no scheduled jobs were generated', 'Open Journey Automation and verify active rules for this company/route')
+      }
 
       console.log('✅ All done!')
 
@@ -310,9 +289,12 @@ export default function EditManifest() {
 
   return (
     <div>
-      <h2 className="text-3xl font-bold text-gray-800 mb-8">Edit Manifest Data</h2>
+      <div className="mb-6 rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-700 text-white p-6 shadow-lg shadow-cyan-100">
+        <h2 className="text-3xl font-bold">Edit Manifest Data</h2>
+        <p className="text-cyan-50 mt-2">Complete trip details, validate passengers, and prepare notifications in one flow.</p>
+      </div>
 
-      <div className="bg-white rounded-lg shadow p-6 mb-6">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
         <h3 className="text-xl font-semibold mb-4">Trip Details</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -377,7 +359,7 @@ export default function EditManifest() {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow p-6 mb-6">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
         <div className="flex justify-between items-center mb-6 pb-4 border-b">
           <div>
             <h3 className="text-xl font-semibold flex items-center">
@@ -389,18 +371,30 @@ export default function EditManifest() {
           <div className="flex space-x-3">
             <button
               onClick={addPassenger}
-              className="bg-blue-600 text-white px-5 py-2.5 rounded-lg flex items-center space-x-2 hover:bg-blue-700 transition-colors shadow-sm"
+              className="btn-primary px-5 py-2.5 flex items-center space-x-2"
             >
               <Plus size={18} />
               <span>Add One</span>
             </button>
             <button
               onClick={addMultiplePassengers}
-              className="bg-green-600 text-white px-5 py-2.5 rounded-lg flex items-center space-x-2 hover:bg-green-700 transition-colors shadow-sm"
+              className="btn-secondary px-5 py-2.5 flex items-center space-x-2"
             >
               <Plus size={18} />
               <span>Add Multiple</span>
             </button>
+            <div className="flex items-center gap-2 border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50">
+              <label htmlFor="bulk-passenger-count" className="text-xs text-slate-600">Count</label>
+              <input
+                id="bulk-passenger-count"
+                type="number"
+                min="1"
+                max="100"
+                value={bulkAddCount}
+                onChange={(e) => setBulkAddCount(e.target.value)}
+                className="w-16 px-2 py-1 text-sm border border-slate-300 rounded-md bg-white"
+              />
+            </div>
           </div>
         </div>
 
@@ -419,7 +413,7 @@ export default function EditManifest() {
                 </h4>
                 <button
                   onClick={() => deletePassenger(index)}
-                  className="text-red-600 hover:bg-red-50 p-2 rounded-lg transition-colors"
+                  className="btn-icon-danger"
                 >
                   <Trash2 size={20} />
                 </button>
@@ -526,7 +520,7 @@ export default function EditManifest() {
           ))}
 
           {passengers.length === 0 && (
-            <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+            <div className="text-center py-12 bg-slate-50 rounded-xl border-2 border-dashed border-slate-300">
               <Users size={48} className="mx-auto text-gray-400 mb-3" />
               <p className="text-gray-600 font-medium mb-2">No passengers added yet</p>
               <p className="text-sm text-gray-500 mb-4">Click "Add One" or "Add Multiple" to start adding passengers</p>
@@ -538,7 +532,7 @@ export default function EditManifest() {
       <div className="flex space-x-4">
         <button
           onClick={() => navigate('/capture-manifest')}
-          className="flex-1 bg-gray-100 text-gray-700 py-3.5 rounded-lg hover:bg-gray-200 font-medium transition-colors"
+          className="btn-secondary flex-1 py-3.5"
         >
           ← Back to Capture
         </button>

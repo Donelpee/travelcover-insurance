@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
-import { ArrowLeft, FileText, Users, Truck, MapPin, Calendar, Clock } from 'lucide-react'
+import { ArrowLeft, FileText, Users, Truck, MapPin, Calendar, Clock, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { error } from '../utils/notifications'
 
 export default function ManifestDetails() {
@@ -10,6 +10,9 @@ export default function ManifestDetails() {
   const [manifest, setManifest] = useState(null)
   const [passengers, setPassengers] = useState([])
   const [loading, setLoading] = useState(true)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   useEffect(() => {
     fetchManifestDetails()
@@ -67,6 +70,30 @@ export default function ManifestDetails() {
       </div>
     )
   }
+
+  const filteredPassengers = passengers.filter((passenger) => {
+    const q = searchTerm.trim().toLowerCase()
+    if (!q) return true
+
+    const text = [
+      passenger.full_name,
+      passenger.phone_number,
+      passenger.email,
+      passenger.next_of_kin_name,
+      passenger.next_of_kin_phone,
+      passenger.next_of_kin_email
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+
+    return text.includes(q)
+  })
+
+  const totalPages = Math.max(1, Math.ceil(filteredPassengers.length / pageSize))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const startIndex = (safeCurrentPage - 1) * pageSize
+  const paginatedPassengers = filteredPassengers.slice(startIndex, startIndex + pageSize)
 
   return (
     <div>
@@ -178,9 +205,24 @@ export default function ManifestDetails() {
           Passengers ({passengers.length})
         </h3>
 
-        {passengers.length === 0 ? (
+        <div className="mb-4 relative">
+          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => {
+              setSearchTerm(e.target.value)
+              setCurrentPage(1)
+            }}
+            placeholder="Search passenger or next-of-kin"
+            className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg"
+          />
+        </div>
+
+        {filteredPassengers.length === 0 ? (
           <p className="text-gray-500 text-center py-8">No passengers recorded</p>
         ) : (
+          <>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -195,9 +237,9 @@ export default function ManifestDetails() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {passengers.map((passenger, index) => (
+                {paginatedPassengers.map((passenger, index) => (
                   <tr key={passenger.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 text-sm text-gray-900">{index + 1}</td>
+                    <td className="px-6 py-4 text-sm text-gray-900">{startIndex + index + 1}</td>
                     <td className="px-6 py-4 text-sm font-medium text-gray-900">{passenger.full_name}</td>
                     <td className="px-6 py-4 text-sm text-gray-500">{passenger.phone_number}</td>
                     <td className="px-6 py-4 text-sm text-gray-500">{passenger.email || '-'}</td>
@@ -209,6 +251,39 @@ export default function ManifestDetails() {
               </tbody>
             </table>
           </div>
+          <div className="mt-4 flex items-center justify-between">
+            <p className="text-sm text-gray-600">Showing {startIndex + 1}-{Math.min(startIndex + pageSize, filteredPassengers.length)} of {filteredPassengers.length}</p>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">Rows</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value))
+                  setCurrentPage(1)
+                }}
+                className="px-2 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={50}>50</option>
+              </select>
+              <button
+                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                disabled={safeCurrentPage === 1}
+                className="btn-secondary px-3 py-2 disabled:opacity-50"
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <button
+                onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={safeCurrentPage === totalPages}
+                className="btn-secondary px-3 py-2 disabled:opacity-50"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+          </>
         )}
       </div>
     </div>

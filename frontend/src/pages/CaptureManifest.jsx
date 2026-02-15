@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Camera, Upload, ArrowRight, Loader, X } from 'lucide-react'
 import Tesseract from 'tesseract.js'
 import { success, error, warning, info } from '../utils/notifications'
+import { extractPassengerData } from '../services/aiService'
 
 export default function CaptureManifest() {
   const [image, setImage] = useState(null)
@@ -10,6 +11,7 @@ export default function CaptureManifest() {
   const [processing, setProcessing] = useState(false)
   const [ocrProgress, setOcrProgress] = useState(0)
   const [extractedText, setExtractedText] = useState('')
+  const [extractedPassengers, setExtractedPassengers] = useState([])
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const fileInputRef = useRef(null)
@@ -76,13 +78,21 @@ export default function CaptureManifest() {
   function handleFileUpload(e) {
     const file = e.target.files[0]
     if (file) {
+      if (!file.type.startsWith('image/')) {
+        error('Invalid file type', 'Please upload an image file')
+        return
+      }
+
+      if (file.size > 10 * 1024 * 1024) {
+        error('File too large', 'Please upload an image below 10MB')
+        return
+      }
+
       if (file.type.startsWith('image/')) {
         setImage(file)
         const url = URL.createObjectURL(file)
         setImagePreview(url)
         success('Image uploaded!', 'Ready to process')
-      } else {
-        error('Invalid file type', 'Please upload an image file')
       }
     }
   }
@@ -129,6 +139,7 @@ export default function CaptureManifest() {
     setProcessing(true)
     setOcrProgress(0)
     setExtractedText('')
+    setExtractedPassengers([])
 
     try {
       info('Processing image...', 'This may take 30-60 seconds')
@@ -156,6 +167,19 @@ export default function CaptureManifest() {
       } else {
         success('Text extracted!', `Found ${text.length} characters`)
         setExtractedText(text)
+
+        try {
+          const parsedPassengers = await extractPassengerData(text)
+          if (Array.isArray(parsedPassengers) && parsedPassengers.length > 0) {
+            setExtractedPassengers(parsedPassengers)
+            success('Passengers auto-detected', `${parsedPassengers.length} passenger${parsedPassengers.length === 1 ? '' : 's'} extracted`)
+          } else {
+            warning('No passengers auto-detected', 'You can continue and add passengers manually')
+          }
+        } catch (aiError) {
+          console.error('AI extraction error:', aiError)
+          warning('AI extraction unavailable', 'You can continue and enter passengers manually')
+        }
       }
 
       setProcessing(false)
@@ -170,7 +194,7 @@ export default function CaptureManifest() {
   function continueToEdit() {
     navigate('/edit-manifest', {
       state: {
-        passengers: [],
+        passengers: extractedPassengers,
         imageUrl: imagePreview,
         extractedText: extractedText
       }
@@ -181,6 +205,7 @@ export default function CaptureManifest() {
     setImage(null)
     setImagePreview(null)
     setExtractedText('')
+    setExtractedPassengers([])
     setOcrProgress(0)
     if (cameraActive) {
       stopCamera()
@@ -189,10 +214,13 @@ export default function CaptureManifest() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <h2 className="text-3xl font-bold text-gray-800 mb-8">Capture Manifest</h2>
+      <div className="mb-6 rounded-2xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white p-6 shadow-lg shadow-indigo-100">
+        <h2 className="text-3xl font-bold">Capture Manifest</h2>
+        <p className="text-indigo-50 mt-2">Upload or capture a manifest image, extract text, and continue to passenger validation.</p>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
           {!imagePreview ? (
             <div className="space-y-6">
               <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
@@ -314,7 +342,7 @@ export default function CaptureManifest() {
           )}
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
           <h3 className="text-lg font-semibold mb-4">Extraction Results</h3>
 
           {!imagePreview && (
@@ -356,7 +384,7 @@ export default function CaptureManifest() {
                   ✓ Text Extraction Complete
                 </p>
                 <p className="text-xs text-green-700">
-                  Found {extractedText.length} characters. Review below and add passengers manually.
+                  Found {extractedText.length} characters and {extractedPassengers.length} auto-detected passenger{extractedPassengers.length === 1 ? '' : 's'}. Review below before continuing.
                 </p>
               </div>
 

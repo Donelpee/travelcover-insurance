@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../services/supabase'
-import { Truck, Plus, Edit, Trash2, X, MapPin, Clock, ChevronDown, ChevronUp } from 'lucide-react'
-import { success, error } from '../utils/notifications'
+import { Truck, Plus, Edit, Trash2, X, MapPin, Clock, Search, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react'
+import { success, error, confirm as confirmToast } from '../utils/notifications'
 
 export default function TransportCompanies() {
   const [companies, setCompanies] = useState([])
@@ -13,6 +13,9 @@ export default function TransportCompanies() {
   const [editingRoute, setEditingRoute] = useState(null)
   const [selectedCompanyForRoute, setSelectedCompanyForRoute] = useState(null)
   const [expandedCompany, setExpandedCompany] = useState(null)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   
   const [companyForm, setCompanyForm] = useState({
     company_name: '',
@@ -71,11 +74,38 @@ export default function TransportCompanies() {
   async function handleCompanySubmit(e) {
     e.preventDefault()
 
+    const companyName = companyForm.company_name.trim()
+    const contactPerson = companyForm.contact_person.trim()
+    const phoneNumber = companyForm.phone_number.trim()
+    const email = companyForm.email.trim()
+
+    if (!companyName) {
+      error('Validation error', 'Company name is required')
+      return
+    }
+
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      error('Validation error', 'Enter a valid email address')
+      return
+    }
+
+    if (phoneNumber && !/^\+?[0-9\s()-]{8,20}$/.test(phoneNumber)) {
+      error('Validation error', 'Enter a valid phone number')
+      return
+    }
+
+    const normalizedCompanyForm = {
+      company_name: companyName,
+      contact_person: contactPerson,
+      phone_number: phoneNumber,
+      email
+    }
+
     try {
       if (editingCompany) {
         const { error: updateError } = await supabase
           .from('transport_companies')
-          .update(companyForm)
+          .update(normalizedCompanyForm)
           .eq('id', editingCompany.id)
 
         if (updateError) throw updateError
@@ -83,7 +113,7 @@ export default function TransportCompanies() {
       } else {
         const { error: insertError } = await supabase
           .from('transport_companies')
-          .insert([companyForm])
+          .insert([normalizedCompanyForm])
 
         if (insertError) throw insertError
         success('Company added!')
@@ -102,14 +132,40 @@ export default function TransportCompanies() {
   async function handleRouteSubmit(e) {
     e.preventDefault()
 
-    const routeName = routeForm.route_name || 
-      `${routeForm.departure_location} - ${routeForm.destination}`
+    const departureLocation = routeForm.departure_location.trim()
+    const destination = routeForm.destination.trim()
+    const routeNameValue = routeForm.route_name.trim()
+    const durationHours = Number(routeForm.duration_hours)
+
+    if (!selectedCompanyForRoute) {
+      error('Validation error', 'Select a company before adding a route')
+      return
+    }
+
+    if (!departureLocation || !destination) {
+      error('Validation error', 'Departure and destination are required')
+      return
+    }
+
+    if (departureLocation.toLowerCase() === destination.toLowerCase()) {
+      error('Validation error', 'Departure and destination cannot be the same')
+      return
+    }
+
+    if (!Number.isFinite(durationHours) || durationHours <= 0) {
+      error('Validation error', 'Duration must be greater than 0')
+      return
+    }
+
+    const routeName = routeNameValue || `${departureLocation} - ${destination}`
 
     const dataToSave = {
       ...routeForm,
       route_name: routeName,
+      departure_location: departureLocation,
+      destination,
       company_id: selectedCompanyForRoute,
-      duration_hours: routeForm.duration_hours ? parseFloat(routeForm.duration_hours) : null
+      duration_hours: durationHours
     }
 
     try {
@@ -141,7 +197,7 @@ export default function TransportCompanies() {
   }
 
   async function handleDeleteCompany(id) {
-    if (!window.confirm('Delete this company? All routes will also be deleted.')) return
+    if (!(await confirmToast('Delete this company? All routes will also be deleted.', { confirmText: 'Delete' }))) return
 
     try {
       const { error: deleteError } = await supabase
@@ -159,7 +215,7 @@ export default function TransportCompanies() {
   }
 
   async function handleDeleteRoute(id) {
-    if (!window.confirm('Delete this route?')) return
+    if (!(await confirmToast('Delete this route?', { confirmText: 'Delete' }))) return
 
     try {
       const { error: deleteError } = await supabase
@@ -195,39 +251,90 @@ export default function TransportCompanies() {
     setShowRouteModal(true)
   }
 
+  const filteredCompanies = companies.filter((company) => {
+    const q = searchTerm.trim().toLowerCase()
+    if (!q) return true
+
+    const routeText = getCompanyRoutes(company.id)
+      .map((route) => `${route.departure_location || ''} ${route.destination || ''} ${route.route_name || ''}`)
+      .join(' ')
+
+    const text = [
+      company.company_name,
+      company.contact_person,
+      company.phone_number,
+      company.email,
+      routeText
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+
+    return text.includes(q)
+  })
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm])
+
+  const totalPages = Math.max(1, Math.ceil(filteredCompanies.length / pageSize))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const startIndex = (safeCurrentPage - 1) * pageSize
+  const paginatedCompanies = filteredCompanies.slice(startIndex, startIndex + pageSize)
+
   return (
     <div>
+      <div className="mb-6 rounded-2xl bg-gradient-to-r from-slate-700 to-indigo-700 text-white p-6 shadow-lg shadow-slate-200">
+        <div>
+          <h2 className="text-3xl font-bold">Transport Companies & Routes</h2>
+          <p className="text-slate-100 mt-2">Manage operators and route definitions used across journey automation.</p>
+        </div>
+      </div>
+
       <div className="flex justify-between items-center mb-8">
-        <h2 className="text-3xl font-bold text-gray-800">Transport Companies & Routes</h2>
+        <h3 className="text-2xl font-semibold text-gray-800">Company Directory</h3>
         <button
           onClick={() => {
             setEditingCompany(null)
             setCompanyForm({ company_name: '', contact_person: '', phone_number: '', email: '' })
             setShowCompanyModal(true)
           }}
-          className="bg-blue-600 text-white px-6 py-3 rounded-lg flex items-center space-x-2 hover:bg-blue-700"
+          className="btn-primary px-6 py-3 flex items-center space-x-2"
         >
           <Plus size={20} />
           <span>Add Company</span>
         </button>
       </div>
 
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 mb-6">
+        <div className="relative">
+          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search company, contact, phone, email or route"
+            className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg"
+          />
+        </div>
+      </div>
+
       {loading ? (
         <div className="text-center py-12">Loading...</div>
-      ) : companies.length === 0 ? (
-        <div className="bg-white rounded-lg shadow p-12 text-center">
+      ) : filteredCompanies.length === 0 ? (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-12 text-center">
           <Truck size={64} className="mx-auto text-gray-300 mb-4" />
-          <h3 className="text-xl font-semibold text-gray-600 mb-2">No Companies Yet</h3>
-          <p className="text-gray-500 mb-6">Add your first transport company to get started</p>
+          <h3 className="text-xl font-semibold text-gray-600 mb-2">No matching companies</h3>
+          <p className="text-gray-500 mb-6">Try a different search keyword.</p>
         </div>
       ) : (
         <div className="space-y-4">
-          {companies.map((company) => {
+          {paginatedCompanies.map((company) => {
             const companyRoutes = getCompanyRoutes(company.id)
             const isExpanded = expandedCompany === company.id
 
             return (
-              <div key={company.id} className="bg-white rounded-lg shadow overflow-hidden">
+              <div key={company.id} className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
                 {/* Company Header */}
                 <div className="p-6 border-b">
                   <div className="flex justify-between items-start">
@@ -273,7 +380,7 @@ export default function TransportCompanies() {
                       </button>
                       <button
                         onClick={() => handleDeleteCompany(company.id)}
-                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                        className="btn-icon-danger"
                       >
                         <Trash2 size={18} />
                       </button>
@@ -289,7 +396,7 @@ export default function TransportCompanies() {
 
                 {/* Routes Section (Expandable) */}
                 {isExpanded && (
-                  <div className="p-6 bg-gray-50">
+                  <div className="p-6 bg-slate-50">
                     <h4 className="text-lg font-semibold mb-4 flex items-center">
                       <MapPin className="mr-2 text-green-600" size={20} />
                       Routes ({companyRoutes.length})
@@ -309,7 +416,7 @@ export default function TransportCompanies() {
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {companyRoutes.map((route) => (
-                          <div key={route.id} className="bg-white rounded-lg p-4 border">
+                          <div key={route.id} className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
                             <div className="flex justify-between items-start mb-3">
                               <div className="flex-1">
                                 <div className="flex items-center mb-2">
@@ -343,7 +450,7 @@ export default function TransportCompanies() {
                                 </button>
                                 <button
                                   onClick={() => handleDeleteRoute(route.id)}
-                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded"
+                                  className="btn-icon-danger p-1.5"
                                 >
                                   <Trash2 size={14} />
                                 </button>
@@ -358,6 +465,41 @@ export default function TransportCompanies() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {!loading && filteredCompanies.length > 0 && (
+        <div className="mt-6 flex items-center justify-between">
+          <p className="text-sm text-gray-600">Showing {startIndex + 1}-{Math.min(startIndex + pageSize, filteredCompanies.length)} of {filteredCompanies.length}</p>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">Rows</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="px-2 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+            </select>
+            <button
+              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              disabled={safeCurrentPage === 1}
+              className="btn-secondary px-3 py-2 disabled:opacity-50"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              disabled={safeCurrentPage === totalPages}
+              className="btn-secondary px-3 py-2 disabled:opacity-50"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -419,13 +561,13 @@ export default function TransportCompanies() {
                 <button
                   type="button"
                   onClick={() => setShowCompanyModal(false)}
-                  className="flex-1 px-4 py-2 border rounded-lg hover:bg-gray-50"
+                  className="btn-secondary flex-1"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  className="btn-primary flex-1"
                 >
                   {editingCompany ? 'Update' : 'Add'} Company
                 </button>
@@ -510,13 +652,13 @@ export default function TransportCompanies() {
                 <button
                   type="button"
                   onClick={() => setShowRouteModal(false)}
-                  className="flex-1 px-4 py-2 border rounded-lg hover:bg-gray-50"
+                  className="btn-secondary flex-1"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  className="btn-primary flex-1"
                 >
                   {editingRoute ? 'Update' : 'Add'} Route
                 </button>

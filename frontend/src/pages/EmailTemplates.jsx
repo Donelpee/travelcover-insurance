@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../services/supabase'
-import { Mail, Plus, Edit, Trash2, Eye, Copy, ToggleLeft, ToggleRight } from 'lucide-react'
-import { success, error as errorToast, warning, info } from '../utils/notifications'
+import { Mail, Plus, Edit, Trash2, Eye, Copy, ToggleLeft, ToggleRight, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { success, error as errorToast, warning, info, confirm as confirmToast } from '../utils/notifications'
 import ReactQuill from 'react-quill'
 import 'react-quill/dist/quill.snow.css'
 
-export default function EmailTemplates() {
+export default function EmailTemplates({ embedded = false }) {
   const [templates, setTemplates] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
   const [currentTemplate, setCurrentTemplate] = useState(null)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [formData, setFormData] = useState({
     template_name: '',
     template_type: 'passenger',
@@ -79,18 +82,30 @@ export default function EmailTemplates() {
   }
 
   async function handleSave() {
-    if (!formData.template_name || !formData.subject || !formData.body_html) {
+    const templateName = formData.template_name.trim()
+    const templateSubject = formData.subject.trim()
+    const templateBody = formData.body_html || ''
+    const plainBody = templateBody.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim()
+
+    if (!templateName || !templateSubject || !plainBody) {
       warning('Please fill all required fields')
       return
     }
 
     try {
+      const payload = {
+        ...formData,
+        template_name: templateName,
+        subject: templateSubject,
+        body_html: templateBody
+      }
+
       if (currentTemplate) {
         // Update existing
         const { error } = await supabase
           .from('email_templates')
           .update({
-            ...formData,
+            ...payload,
             updated_at: new Date().toISOString()
           })
           .eq('id', currentTemplate.id)
@@ -101,7 +116,7 @@ export default function EmailTemplates() {
         // Create new
         const { error } = await supabase
           .from('email_templates')
-          .insert([formData])
+          .insert([payload])
 
         if (error) throw error
         success('Template created successfully')
@@ -115,7 +130,7 @@ export default function EmailTemplates() {
   }
 
   async function handleDelete(id) {
-    if (!window.confirm('Are you sure you want to delete this template?')) {
+    if (!(await confirmToast('Are you sure you want to delete this template?', { confirmText: 'Delete' }))) {
       return
     }
 
@@ -192,6 +207,32 @@ export default function EmailTemplates() {
     return result
   }
 
+  const filteredTemplates = templates.filter((template) => {
+    const q = searchTerm.trim().toLowerCase()
+    if (!q) return true
+
+    const text = [
+      template.template_name,
+      template.template_type,
+      template.subject,
+      template.body_html
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+
+    return text.includes(q)
+  })
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm])
+
+  const totalPages = Math.max(1, Math.ceil(filteredTemplates.length / pageSize))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const startIndex = (safeCurrentPage - 1) * pageSize
+  const paginatedTemplates = filteredTemplates.slice(startIndex, startIndex + pageSize)
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -205,22 +246,46 @@ export default function EmailTemplates() {
 
   return (
     <div>
+      {!embedded && (
+      <div className="mb-6 rounded-2xl bg-gradient-to-r from-violet-600 to-purple-700 text-white p-6 shadow-lg shadow-violet-100">
+        <div>
+          <div>
+            <h2 className="text-3xl font-bold">Email Templates</h2>
+            <p className="text-violet-50 mt-1">Create and manage rich templates for passenger and next-of-kin email notifications.</p>
+          </div>
+        </div>
+      </div>
+      )}
+
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h2 className="text-3xl font-bold text-gray-800">Email Templates</h2>
+          <h3 className="text-2xl font-semibold text-gray-800">{embedded ? 'Email Template Library' : 'Template Library'}</h3>
           <p className="text-gray-600 mt-1">Create and manage email templates for passenger notifications</p>
         </div>
         <button
           onClick={openCreateModal}
-          className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+          className="btn-primary px-6 py-3 flex items-center space-x-2"
         >
           <Plus size={20} />
           <span>New Template</span>
         </button>
       </div>
 
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 mb-6">
+        <div className="relative">
+          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search email templates"
+            className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg"
+          />
+        </div>
+      </div>
+
       {/* Available Variables Info */}
-      <div className="bg-blue-50 border-l-4 border-blue-600 p-4 mb-6 rounded">
+      <div className="bg-blue-50 border border-blue-200 p-4 mb-6 rounded-xl">
         <h3 className="font-semibold text-blue-900 mb-2">Available Variables:</h3>
         <p className="text-blue-800 text-sm">
           Use these in your subject and body: <code className="bg-blue-100 px-1 rounded">{'{passenger_name}'}</code>, 
@@ -234,8 +299,8 @@ export default function EmailTemplates() {
 
       {/* Templates Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {templates.map(template => (
-          <div key={template.id} className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow">
+        {paginatedTemplates.map(template => (
+          <div key={template.id} className="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center space-x-2">
@@ -286,7 +351,7 @@ export default function EmailTemplates() {
                 </button>
                 <button
                   onClick={() => handleDelete(template.id)}
-                  className="flex items-center space-x-1 px-3 py-1.5 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200"
+                  className="flex items-center space-x-1 px-3 py-1.5 text-sm rounded bg-red-50 text-red-700 hover:bg-red-100"
                 >
                   <Trash2 size={16} />
                   <span>Delete</span>
@@ -301,16 +366,51 @@ export default function EmailTemplates() {
         ))}
       </div>
 
-      {templates.length === 0 && (
-        <div className="text-center py-12">
+      {filteredTemplates.length === 0 && (
+        <div className="text-center py-12 bg-white rounded-xl border border-slate-200 shadow-sm">
           <Mail className="mx-auto text-gray-400 mb-4" size={48} />
-          <p className="text-gray-600 mb-4">No email templates yet</p>
+          <p className="text-gray-600 mb-4">No matching email templates</p>
           <button
             onClick={openCreateModal}
-            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700"
+            className="btn-primary px-6 py-2"
           >
             Create Your First Template
           </button>
+        </div>
+      )}
+
+      {filteredTemplates.length > 0 && (
+        <div className="mt-6 flex items-center justify-between">
+          <p className="text-sm text-gray-600">Showing {startIndex + 1}-{Math.min(startIndex + pageSize, filteredTemplates.length)} of {filteredTemplates.length}</p>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">Rows</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="px-2 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+            </select>
+            <button
+              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              disabled={safeCurrentPage === 1}
+              className="btn-secondary px-3 py-2 disabled:opacity-50"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              disabled={safeCurrentPage === totalPages}
+              className="btn-secondary px-3 py-2 disabled:opacity-50"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -384,13 +484,13 @@ export default function EmailTemplates() {
             <div className="p-6 border-t bg-gray-50 flex justify-end space-x-3 sticky bottom-0">
               <button
                 onClick={() => setShowModal(false)}
-                className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-100"
+                className="btn-secondary px-6"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSave}
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                className="btn-primary px-6"
               >
                 {currentTemplate ? 'Update Template' : 'Create Template'}
               </button>

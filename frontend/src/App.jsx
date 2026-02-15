@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { useEffect, useRef } from 'react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import TransportCompanies from './pages/TransportCompanies'
@@ -9,16 +10,61 @@ import ManifestsHistory from './pages/ManifestsHistory'
 import SMSLogs from './pages/SMSLogs'
 import ManifestDetails from './pages/ManifestDetails'
 import AdminSettings from './pages/AdminSettings'
-import SMSScheduleRules from './pages/SMSScheduleRules'
-import ScheduledMessages from './pages/ScheduledMessages'
 import { Toaster } from 'react-hot-toast'
-import EmailTemplates from './pages/EmailTemplates'
+import JourneyAutomation from './pages/JourneyAutomation'
+import { processDueNotifications } from './services/notificationService'
 
 
 function App() {
+  const isProcessingRef = useRef(false)
+
+  useEffect(() => {
+    let isMounted = true
+
+    const runDueProcessor = async () => {
+      if (!isMounted || isProcessingRef.current) return
+
+      isProcessingRef.current = true
+      try {
+        await processDueNotifications({ rpcOnly: true })
+      } finally {
+        isProcessingRef.current = false
+      }
+    }
+
+    runDueProcessor()
+
+    const intervalId = window.setInterval(runDueProcessor, 60000)
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        runDueProcessor()
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
+    return () => {
+      isMounted = false
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [])
+
   return ( 
     <>
-      <Toaster position="top-right" />
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 3500,
+          style: {
+            border: '1px solid #e2e8f0',
+            background: '#ffffff',
+            color: '#0f172a',
+            boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)'
+          }
+        }}
+      />
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Layout />}>
@@ -31,9 +77,10 @@ function App() {
             <Route path="/manifest-details/:manifestId" element={<ManifestDetails />} />
             <Route path="/message-logs" element={<SMSLogs />} />
             <Route path="/admin-settings" element={<AdminSettings />} />
-            <Route path="/message-schedule-rules" element={<SMSScheduleRules />} />
-            <Route path="/scheduled-messages" element={<ScheduledMessages />} />
-            <Route path="/email-templates" element={<EmailTemplates />} />
+            <Route path="/message-schedule-rules" element={<JourneyAutomation />} />
+            <Route path="/scheduled-messages" element={<JourneyAutomation />} />
+            <Route path="/email-templates" element={<Navigate to="/admin-settings?tab=email-templates" replace />} />
+            <Route path="/automation" element={<JourneyAutomation />} />
            
           </Route>
         </Routes>

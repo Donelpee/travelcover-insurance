@@ -6,7 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "smoke:notifications": "node scripts/smokeNotifications.mjs",
+    "smoke:notifications:force": "set SMOKE_TRIGGER_DUE=true&& node scripts/smokeNotifications.mjs",
+    "templates:update": "node scripts/updateNotificationTemplates.mjs",
+    "cleanup:scheduled-duplicates": "node scripts/cleanupOldScheduledDuplicates.mjs",
+    "cleanup:scheduled-duplicates:apply": "set APPLY_CLEANUP=true&& node scripts/cleanupOldScheduledDuplicates.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

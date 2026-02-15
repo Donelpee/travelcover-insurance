@@ -1,10 +1,15 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../services/supabase'
-import { Settings, Users, MessageSquare, Save, Plus, Edit, Trash2, X, Send, Shield, CheckCircle } from 'lucide-react'
-import { success, error } from '../utils/notifications'
+import { Settings, Users, MessageSquare, Save, Plus, Edit, Trash2, X, Send, Shield, CheckCircle, Mail, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { success, error, confirm as confirmToast } from '../utils/notifications'
+import EmailTemplates from './EmailTemplates'
 
 export default function AdminSettings() {
-  const [activeTab, setActiveTab] = useState('users')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const availableTabs = ['users', 'templates', 'email-templates', 'sms-settings', 'roles']
+  const initialTab = searchParams.get('tab')
+  const [activeTab, setActiveTab] = useState(availableTabs.includes(initialTab) ? initialTab : 'users')
   
   // Users state
   const [users, setUsers] = useState([])
@@ -16,6 +21,9 @@ export default function AdminSettings() {
     password: '',
     role: 'operator'
   })
+  const [userSearch, setUserSearch] = useState('')
+  const [userPage, setUserPage] = useState(1)
+  const [userPageSize, setUserPageSize] = useState(10)
 
   // Templates state
   const [templates, setTemplates] = useState([])
@@ -26,10 +34,14 @@ export default function AdminSettings() {
     template_type: 'passenger',
     message_content: ''
   })
+  const [smsTemplateSearch, setSmsTemplateSearch] = useState('')
+  const [smsTemplatePage, setSmsTemplatePage] = useState(1)
+  const [smsTemplatePageSize, setSmsTemplatePageSize] = useState(10)
 
   // SMS Settings state
   const [smsSettings, setSmsSettings] = useState({
     sender_id: '',
+    sender_email: '',
     sms_frequency: 'immediate',
     emergency_contact: ''
   })
@@ -45,6 +57,9 @@ export default function AdminSettings() {
     description: '',
     permission_ids: []
   })
+  const [roleSearch, setRoleSearch] = useState('')
+  const [rolePage, setRolePage] = useState(1)
+  const [rolePageSize, setRolePageSize] = useState(10)
 
   useEffect(() => {
     fetchUsers()
@@ -53,6 +68,18 @@ export default function AdminSettings() {
     fetchRoles()
     fetchPermissions()
   }, [])
+
+  useEffect(() => {
+    const tab = searchParams.get('tab')
+    if (tab && availableTabs.includes(tab) && tab !== activeTab) {
+      setActiveTab(tab)
+    }
+  }, [searchParams, activeTab])
+
+  function switchTab(tab) {
+    setActiveTab(tab)
+    setSearchParams({ tab })
+  }
 
   // ====== USER MANAGEMENT ======
   async function fetchUsers() {
@@ -71,12 +98,31 @@ export default function AdminSettings() {
 
   async function handleUserSubmit(e) {
     e.preventDefault()
+
+    const fullName = userForm.full_name.trim()
+    const email = userForm.email.trim().toLowerCase()
+    const password = userForm.password
+
+    if (!fullName) {
+      error('Validation error', 'Full name is required')
+      return
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      error('Validation error', 'Enter a valid email address')
+      return
+    }
+
+    if (!editingUser && (!password || password.length < 6)) {
+      error('Validation error', 'Password must be at least 6 characters')
+      return
+    }
     
     try {
       if (editingUser) {
         const updateData = {
-          full_name: userForm.full_name,
-          email: userForm.email,
+          full_name: fullName,
+          email,
           role: userForm.role
         }
         
@@ -95,9 +141,9 @@ export default function AdminSettings() {
         const { error: insertError } = await supabase
           .from('app_users')
           .insert([{
-            full_name: userForm.full_name,
-            email: userForm.email,
-            password_hash: userForm.password,
+            full_name: fullName,
+            email,
+            password_hash: password,
             role: userForm.role
           }])
 
@@ -116,7 +162,7 @@ export default function AdminSettings() {
   }
 
   async function handleDeleteUser(id) {
-    if (!window.confirm('Delete this user?')) return
+    if (!(await confirmToast('Delete this user?', { confirmText: 'Delete' }))) return
 
     try {
       const { error: deleteError } = await supabase
@@ -150,12 +196,31 @@ export default function AdminSettings() {
   async function handleTemplateSubmit(e) {
     e.preventDefault()
 
+    const templateName = templateForm.template_name.trim()
+    const messageContent = templateForm.message_content.trim()
+
+    if (!templateName || !messageContent) {
+      error('Validation error', 'Template name and message content are required')
+      return
+    }
+
+    if (messageContent.length < 10) {
+      error('Validation error', 'Template message is too short')
+      return
+    }
+
     try {
+      const payload = {
+        ...templateForm,
+        template_name: templateName,
+        message_content: messageContent
+      }
+
       if (editingTemplate) {
         const { error: updateError } = await supabase
           .from('sms_templates')
           .update({
-            ...templateForm,
+            ...payload,
             updated_at: new Date().toISOString()
           })
           .eq('id', editingTemplate.id)
@@ -165,7 +230,7 @@ export default function AdminSettings() {
       } else {
         const { error: insertError } = await supabase
           .from('sms_templates')
-          .insert([templateForm])
+          .insert([payload])
 
         if (insertError) throw insertError
         success('Template created!')
@@ -181,7 +246,7 @@ export default function AdminSettings() {
   }
 
   async function handleDeleteTemplate(id) {
-    if (!window.confirm('Delete this template?')) return
+    if (!(await confirmToast('Delete this template?', { confirmText: 'Delete' }))) return
 
     try {
       const { error: deleteError } = await supabase
@@ -218,10 +283,36 @@ export default function AdminSettings() {
   }
 
   async function handleSaveSettings() {
+    const senderId = (smsSettings.sender_id || '').trim()
+    const senderEmail = (smsSettings.sender_email || '').trim().toLowerCase()
+    const emergencyContact = (smsSettings.emergency_contact || '').trim()
+
+    if (!senderId) {
+      error('Validation error', 'Sender ID is required')
+      return
+    }
+
+    if (emergencyContact && !/^\+?[0-9\s()-]{8,20}$/.test(emergencyContact)) {
+      error('Validation error', 'Emergency contact must be a valid phone number')
+      return
+    }
+
+    if (senderEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(senderEmail)) {
+      error('Validation error', 'Sender Email must be a valid email address')
+      return
+    }
+
+    const normalizedSettings = {
+      ...smsSettings,
+      sender_id: senderId,
+      sender_email: senderEmail,
+      emergency_contact: emergencyContact
+    }
+
     setSavingSettings(true)
 
     try {
-      for (const [key, value] of Object.entries(smsSettings)) {
+      for (const [key, value] of Object.entries(normalizedSettings)) {
         await supabase
           .from('sms_settings')
           .upsert({
@@ -276,13 +367,26 @@ export default function AdminSettings() {
   async function handleRoleSubmit(e) {
     e.preventDefault()
 
+    const roleName = roleForm.role_name.trim()
+    const description = roleForm.description.trim()
+
+    if (!roleName || roleName.length < 3) {
+      error('Validation error', 'Role name must be at least 3 characters')
+      return
+    }
+
+    if (roleForm.permission_ids.length === 0) {
+      error('Validation error', 'Select at least one permission')
+      return
+    }
+
     try {
       if (editingRole) {
         const { error: roleError } = await supabase
           .from('roles')
           .update({
-            role_name: roleForm.role_name,
-            description: roleForm.description
+            role_name: roleName,
+            description
           })
           .eq('id', editingRole.id)
 
@@ -309,8 +413,8 @@ export default function AdminSettings() {
         const { data: newRole, error: roleError } = await supabase
           .from('roles')
           .insert([{
-            role_name: roleForm.role_name,
-            description: roleForm.description
+            role_name: roleName,
+            description
           }])
           .select()
           .single()
@@ -342,7 +446,7 @@ export default function AdminSettings() {
   }
 
   async function handleDeleteRole(id) {
-    if (!window.confirm('Delete this role? Users with this role will lose access.')) return
+    if (!(await confirmToast('Delete this role? Users with this role will lose access.', { confirmText: 'Delete' }))) return
 
     try {
       const { error: deleteError } = await supabase
@@ -358,21 +462,67 @@ export default function AdminSettings() {
     }
   }
 
+  const filteredUsers = users.filter((user) => {
+    const q = userSearch.trim().toLowerCase()
+    if (!q) return true
+    return [user.full_name, user.email, user.role, user.is_active ? 'active' : 'inactive']
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+      .includes(q)
+  })
+  const userTotalPages = Math.max(1, Math.ceil(filteredUsers.length / userPageSize))
+  const safeUserPage = Math.min(userPage, userTotalPages)
+  const userStartIndex = (safeUserPage - 1) * userPageSize
+  const paginatedUsers = filteredUsers.slice(userStartIndex, userStartIndex + userPageSize)
+
+  const filteredSmsTemplates = templates.filter((template) => {
+    const q = smsTemplateSearch.trim().toLowerCase()
+    if (!q) return true
+    return [template.template_name, template.template_type, template.message_content]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+      .includes(q)
+  })
+  const smsTemplateTotalPages = Math.max(1, Math.ceil(filteredSmsTemplates.length / smsTemplatePageSize))
+  const safeSmsTemplatePage = Math.min(smsTemplatePage, smsTemplateTotalPages)
+  const smsTemplateStartIndex = (safeSmsTemplatePage - 1) * smsTemplatePageSize
+  const paginatedSmsTemplates = filteredSmsTemplates.slice(smsTemplateStartIndex, smsTemplateStartIndex + smsTemplatePageSize)
+
+  const filteredRoles = roles.filter((role) => {
+    const q = roleSearch.trim().toLowerCase()
+    if (!q) return true
+    const rolePermissions = role.role_permissions?.map((rp) => rp.permissions?.permission_name).filter(Boolean).join(' ') || ''
+    return [role.role_name, role.description, rolePermissions]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+      .includes(q)
+  })
+  const roleTotalPages = Math.max(1, Math.ceil(filteredRoles.length / rolePageSize))
+  const safeRolePage = Math.min(rolePage, roleTotalPages)
+  const roleStartIndex = (safeRolePage - 1) * rolePageSize
+  const paginatedRoles = filteredRoles.slice(roleStartIndex, roleStartIndex + rolePageSize)
+
   return (
     <div>
-      <h2 className="text-3xl font-bold text-gray-800 mb-8 flex items-center">
-        <Settings className="mr-3" size={32} />
-        Admin Settings
-      </h2>
+      <div className="mb-6 rounded-2xl bg-gradient-to-r from-slate-800 to-slate-700 text-white p-6 shadow-lg shadow-slate-200">
+        <h2 className="text-3xl font-bold flex items-center">
+          <Settings className="mr-3" size={32} />
+          Admin Settings
+        </h2>
+        <p className="text-slate-200 mt-2">Manage users, templates, notification configuration, and role permissions from one control center.</p>
+      </div>
 
       {/* Tabs */}
-      <div className="bg-white rounded-lg shadow mb-6">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm mb-6">
         <div className="flex border-b">
           <button
-            onClick={() => setActiveTab('users')}
+            onClick={() => switchTab('users')}
             className={`flex-1 px-6 py-4 font-medium transition-colors ${
               activeTab === 'users'
-                ? 'border-b-2 border-blue-600 text-blue-600'
+                ? 'border-b-2 border-blue-600 text-blue-600 bg-blue-50/70'
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -380,10 +530,10 @@ export default function AdminSettings() {
             User Management
           </button>
           <button
-            onClick={() => setActiveTab('templates')}
+            onClick={() => switchTab('templates')}
             className={`flex-1 px-6 py-4 font-medium transition-colors ${
               activeTab === 'templates'
-                ? 'border-b-2 border-blue-600 text-blue-600'
+                ? 'border-b-2 border-blue-600 text-blue-600 bg-blue-50/70'
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -391,21 +541,32 @@ export default function AdminSettings() {
             SMS Templates
           </button>
           <button
-            onClick={() => setActiveTab('sms-settings')}
+            onClick={() => switchTab('email-templates')}
+            className={`flex-1 px-6 py-4 font-medium transition-colors ${
+              activeTab === 'email-templates'
+                ? 'border-b-2 border-blue-600 text-blue-600 bg-blue-50/70'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Mail className="inline mr-2" size={20} />
+            Email Templates
+          </button>
+          <button
+            onClick={() => switchTab('sms-settings')}
             className={`flex-1 px-6 py-4 font-medium transition-colors ${
               activeTab === 'sms-settings'
-                ? 'border-b-2 border-blue-600 text-blue-600'
+                ? 'border-b-2 border-blue-600 text-blue-600 bg-blue-50/70'
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
             <Send className="inline mr-2" size={20} />
-            SMS Settings
+            Notification Settings
           </button>
           <button
-            onClick={() => setActiveTab('roles')}
+            onClick={() => switchTab('roles')}
             className={`flex-1 px-6 py-4 font-medium transition-colors ${
               activeTab === 'roles'
-                ? 'border-b-2 border-blue-600 text-blue-600'
+                ? 'border-b-2 border-blue-600 text-blue-600 bg-blue-50/70'
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -433,6 +594,20 @@ export default function AdminSettings() {
             </button>
           </div>
 
+          <div className="mb-4 relative">
+            <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={userSearch}
+              onChange={(e) => {
+                setUserSearch(e.target.value)
+                setUserPage(1)
+              }}
+              placeholder="Search users by name, email, role or status"
+              className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg"
+            />
+          </div>
+
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -444,7 +619,7 @@ export default function AdminSettings() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {users.map(user => (
+              {paginatedUsers.map(user => (
                 <tr key={user.id}>
                   <td className="px-6 py-4 text-sm font-medium text-gray-900">{user.full_name}</td>
                   <td className="px-6 py-4 text-sm text-gray-500">{user.email}</td>
@@ -480,7 +655,7 @@ export default function AdminSettings() {
                     </button>
                     <button
                       onClick={() => handleDeleteUser(user.id)}
-                      className="text-red-600 hover:text-red-900"
+                      className="btn-icon-danger"
                     >
                       <Trash2 size={18} />
                     </button>
@@ -489,6 +664,47 @@ export default function AdminSettings() {
               ))}
             </tbody>
           </table>
+
+          {filteredUsers.length > 0 && (
+            <div className="mt-4 flex items-center justify-between">
+              <p className="text-sm text-gray-600">Showing {userStartIndex + 1}-{Math.min(userStartIndex + userPageSize, filteredUsers.length)} of {filteredUsers.length}</p>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-600">Rows</span>
+                <select
+                  value={userPageSize}
+                  onChange={(e) => {
+                    setUserPageSize(Number(e.target.value))
+                    setUserPage(1)
+                  }}
+                  className="px-2 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+                <button
+                  onClick={() => setUserPage((prev) => Math.max(1, prev - 1))}
+                  disabled={safeUserPage === 1}
+                  className="btn-secondary px-3 py-2 disabled:opacity-50"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  onClick={() => setUserPage((prev) => Math.min(userTotalPages, prev + 1))}
+                  disabled={safeUserPage === userTotalPages}
+                  className="btn-secondary px-3 py-2 disabled:opacity-50"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'email-templates' && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <EmailTemplates embedded />
         </div>
       )}
 
@@ -516,7 +732,20 @@ export default function AdminSettings() {
           </div>
 
           <div className="grid grid-cols-1 gap-4">
-            {templates.map(template => (
+            <div className="mb-2 relative">
+              <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={smsTemplateSearch}
+                onChange={(e) => {
+                  setSmsTemplateSearch(e.target.value)
+                  setSmsTemplatePage(1)
+                }}
+                placeholder="Search SMS templates"
+                className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg"
+              />
+            </div>
+            {paginatedSmsTemplates.map(template => (
               <div key={template.id} className="border rounded-lg p-4">
                 <div className="flex justify-between items-start mb-2">
                   <div className="flex-1">
@@ -546,7 +775,7 @@ export default function AdminSettings() {
                     </button>
                     <button
                       onClick={() => handleDeleteTemplate(template.id)}
-                      className="text-red-600 hover:text-red-900"
+                      className="btn-icon-danger"
                     >
                       <Trash2 size={18} />
                     </button>
@@ -558,13 +787,48 @@ export default function AdminSettings() {
               </div>
             ))}
           </div>
+
+          {filteredSmsTemplates.length > 0 && (
+            <div className="mt-4 flex items-center justify-between">
+              <p className="text-sm text-gray-600">Showing {smsTemplateStartIndex + 1}-{Math.min(smsTemplateStartIndex + smsTemplatePageSize, filteredSmsTemplates.length)} of {filteredSmsTemplates.length}</p>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-600">Rows</span>
+                <select
+                  value={smsTemplatePageSize}
+                  onChange={(e) => {
+                    setSmsTemplatePageSize(Number(e.target.value))
+                    setSmsTemplatePage(1)
+                  }}
+                  className="px-2 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+                <button
+                  onClick={() => setSmsTemplatePage((prev) => Math.max(1, prev - 1))}
+                  disabled={safeSmsTemplatePage === 1}
+                  className="btn-secondary px-3 py-2 disabled:opacity-50"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  onClick={() => setSmsTemplatePage((prev) => Math.min(smsTemplateTotalPages, prev + 1))}
+                  disabled={safeSmsTemplatePage === smsTemplateTotalPages}
+                  className="btn-secondary px-3 py-2 disabled:opacity-50"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* SMS SETTINGS TAB */}
+      {/* NOTIFICATION SETTINGS TAB */}
       {activeTab === 'sms-settings' && (
         <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-xl font-semibold mb-6">SMS Configuration</h3>
+          <h3 className="text-xl font-semibold mb-6">Notification Configuration</h3>
 
           <div className="space-y-6 max-w-2xl">
             <div>
@@ -580,6 +844,22 @@ export default function AdminSettings() {
               />
               <p className="text-xs text-gray-500 mt-1">
                 The name that appears as sender. Must be approved by your SMS provider.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Sender Email ID
+              </label>
+              <input
+                type="email"
+                value={smsSettings.sender_email || ''}
+                onChange={(e) => setSmsSettings({ ...smsSettings, sender_email: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                placeholder="e.g., noreply@travelcover.com.ng"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                The email address used as the sender identity for outbound emails.
               </p>
             </div>
 
@@ -645,7 +925,20 @@ export default function AdminSettings() {
           </div>
 
           <div className="grid grid-cols-1 gap-4">
-            {roles.map(role => {
+            <div className="mb-2 relative">
+              <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={roleSearch}
+                onChange={(e) => {
+                  setRoleSearch(e.target.value)
+                  setRolePage(1)
+                }}
+                placeholder="Search roles and permissions"
+                className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg"
+              />
+            </div>
+            {paginatedRoles.map(role => {
               const rolePermissions = role.role_permissions?.map(rp => rp.permissions) || []
               const permissionsByCategory = rolePermissions.reduce((acc, perm) => {
                 if (!acc[perm.category]) acc[perm.category] = []
@@ -680,7 +973,7 @@ export default function AdminSettings() {
                       </button>
                       <button
                         onClick={() => handleDeleteRole(role.id)}
-                        className="text-red-600 hover:text-red-900"
+                        className="btn-icon-danger"
                       >
                         <Trash2 size={18} />
                       </button>
@@ -707,6 +1000,41 @@ export default function AdminSettings() {
               )
             })}
           </div>
+
+          {filteredRoles.length > 0 && (
+            <div className="mt-4 flex items-center justify-between">
+              <p className="text-sm text-gray-600">Showing {roleStartIndex + 1}-{Math.min(roleStartIndex + rolePageSize, filteredRoles.length)} of {filteredRoles.length}</p>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-600">Rows</span>
+                <select
+                  value={rolePageSize}
+                  onChange={(e) => {
+                    setRolePageSize(Number(e.target.value))
+                    setRolePage(1)
+                  }}
+                  className="px-2 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+                <button
+                  onClick={() => setRolePage((prev) => Math.max(1, prev - 1))}
+                  disabled={safeRolePage === 1}
+                  className="btn-secondary px-3 py-2 disabled:opacity-50"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  onClick={() => setRolePage((prev) => Math.min(roleTotalPages, prev + 1))}
+                  disabled={safeRolePage === roleTotalPages}
+                  className="btn-secondary px-3 py-2 disabled:opacity-50"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -777,13 +1105,13 @@ export default function AdminSettings() {
                 <button
                   type="button"
                   onClick={() => setShowUserModal(false)}
-                  className="flex-1 px-4 py-2 border rounded-lg hover:bg-gray-50"
+                  className="btn-secondary flex-1"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  className="btn-primary flex-1"
                 >
                   {editingUser ? 'Update' : 'Create'} User
                 </button>
@@ -852,13 +1180,13 @@ export default function AdminSettings() {
                 <button
                   type="button"
                   onClick={() => setShowTemplateModal(false)}
-                  className="flex-1 px-4 py-2 border rounded-lg hover:bg-gray-50"
+                  className="btn-secondary flex-1"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  className="btn-primary flex-1"
                 >
                   {editingTemplate ? 'Update' : 'Create'} Template
                 </button>
@@ -959,13 +1287,13 @@ export default function AdminSettings() {
                 <button
                   type="button"
                   onClick={() => setShowRoleModal(false)}
-                  className="flex-1 px-4 py-2 border rounded-lg hover:bg-gray-50"
+                  className="btn-secondary flex-1"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  className="btn-primary flex-1"
                 >
                   {editingRole ? 'Update' : 'Create'} Role
                 </button>

@@ -1,22 +1,22 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../services/supabase'
-import { Truck, MapPin, Users, FileText, Send, CheckCircle, XCircle, Mail, MessageSquare } from 'lucide-react'
+import { Truck, MapPin, Users, FileText, Send, CheckCircle, XCircle, Mail, MessageSquare, LayoutDashboard } from 'lucide-react'
 
 // StatCard component OUTSIDE of Dashboard (fixes "static-components" error)
 function StatCard({ icon: Icon, title, value, color, loading, subtitle }) {
   return (
-    <div className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow">
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 hover:shadow-md transition-shadow">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-gray-500 text-sm font-medium">{title}</p>
-          <p className={`text-3xl font-bold mt-2 ${color}`}>
+          <p className={`text-2xl lg:text-3xl font-bold mt-1.5 ${color}`}>
             {loading ? '...' : value.toLocaleString()}
           </p>
           {subtitle && (
             <p className="text-xs text-gray-400 mt-1">{subtitle}</p>
           )}
         </div>
-        <div className={`p-3 rounded-full ${color.replace('text', 'bg').replace('600', '100')}`}>
+        <div className={`p-3 rounded-xl ${color.replace('text', 'bg').replace('600', '100')}`}>
           <Icon className={color} size={28} />
         </div>
       </div>
@@ -127,7 +127,17 @@ export default function Dashboard() {
 
   return (
     <div>
-      <h2 className="text-3xl font-bold text-gray-800 mb-8">Dashboard</h2>
+      <div className="mb-6 rounded-2xl bg-gradient-to-r from-blue-700 via-indigo-600 to-violet-600 text-white p-7 shadow-xl shadow-blue-200">
+        <div className="flex items-start gap-3">
+          <div className="h-11 w-11 rounded-xl bg-white/20 flex items-center justify-center border border-white/30">
+            <LayoutDashboard size={22} />
+          </div>
+          <div>
+            <h2 className="text-3xl font-bold">Dashboard</h2>
+            <p className="text-blue-50 mt-2">Live view of transport, manifest, SMS, and email performance.</p>
+          </div>
+        </div>
+      </div>
 
       {/* Company Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -162,7 +172,7 @@ export default function Dashboard() {
       </div>
 
       {/* Combined Message Stats */}
-      <h3 className="text-xl font-semibold text-gray-800 mb-4">Message Statistics (SMS + Email)</h3>
+      <h3 className="text-lg font-semibold text-gray-800 mb-3">Message Statistics (SMS + Email)</h3>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <StatCard
           icon={Send}
@@ -191,10 +201,10 @@ export default function Dashboard() {
       </div>
 
       {/* Separate SMS & Email Stats */}
-      <h3 className="text-xl font-semibold text-gray-800 mb-4">Detailed Breakdown</h3>
+      <h3 className="text-lg font-semibold text-gray-800 mb-3">Detailed Breakdown</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         {/* SMS Stats */}
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
           <div className="flex items-center mb-4">
             <MessageSquare className="text-blue-600 mr-2" size={24} />
             <h4 className="text-lg font-semibold text-gray-800">SMS Statistics</h4>
@@ -226,7 +236,7 @@ export default function Dashboard() {
         </div>
 
         {/* Email Stats */}
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
           <div className="flex items-center mb-4">
             <Mail className="text-purple-600 mr-2" size={24} />
             <h4 className="text-lg font-semibold text-gray-800">Email Statistics</h4>
@@ -259,7 +269,7 @@ export default function Dashboard() {
       </div>
 
       {/* Welcome Message */}
-      <div className="mt-8 bg-blue-50 border-l-4 border-blue-600 p-6 rounded">
+      <div className="mt-8 bg-blue-50 border border-blue-100 p-5 rounded-xl">
         <h3 className="text-lg font-semibold text-blue-900 mb-2">
           Welcome to TravelCover Insurance Management System
         </h3>

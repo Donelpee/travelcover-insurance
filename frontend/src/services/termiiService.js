@@ -13,9 +13,10 @@ export async function scheduleBulkSMS(passengers, manifestData, scheduledTime) {
   try {
     for (const passenger of passengers) {
       // Schedule passenger SMS
-      await supabase.from('scheduled_jobs').insert({  // ← CHECK THIS LINE
+      await supabase.from('scheduled_jobs').insert({
+        manifest_id: manifestData.manifest_id || null,
         recipient_phone: passenger.phone_number,
-        message_content: `Dear ${passenger.full_name}, safe journey from ${manifestData.departure} to ${manifestData.destination} with ${manifestData.company}. Trip: ${manifestData.trip_date}`,
+        message_content: `Hello ${passenger.full_name}, your ${manifestData.departure} to ${manifestData.destination} trip with ${manifestData.company} on ${new Date(manifestData.trip_date).toLocaleDateString()} is active and insured. Ref: ${manifestData.manifest_reference || 'N/A'}. Support: +2348000000000.`,
         scheduled_time: scheduledTime,
         status: 'pending',
         recipient_type: 'passenger',
@@ -25,9 +26,10 @@ export async function scheduleBulkSMS(passengers, manifestData, scheduledTime) {
       results.scheduled++
 
       // Schedule NOK SMS
-      await supabase.from('scheduled_jobs').insert({  // ← CHECK THIS LINE
+      await supabase.from('scheduled_jobs').insert({
+        manifest_id: manifestData.manifest_id || null,
         recipient_phone: passenger.next_of_kin_phone,
-        message_content: `Hello ${passenger.next_of_kin_name}, ${passenger.full_name} is traveling from ${manifestData.departure} to ${manifestData.destination}`,
+        message_content: `Travel update: ${passenger.full_name} is on trip ${manifestData.departure} to ${manifestData.destination} with ${manifestData.company} on ${new Date(manifestData.trip_date).toLocaleDateString()}. Insurance is active. Ref: ${manifestData.manifest_reference || 'N/A'}. Support: +2348000000000.`,
         scheduled_time: scheduledTime,
         status: 'pending',
         recipient_type: 'next_of_kin',
@@ -91,7 +93,7 @@ export async function sendBulkSMS(passengers, manifestData) {
   for (const passenger of passengers) {
     // Send to passenger
     results.total++
-    const passengerMessage = `Dear ${passenger.full_name}, safe journey from ${manifestData.departure} to ${manifestData.destination} with ${manifestData.company}. Trip: ${new Date(manifestData.trip_date).toLocaleDateString()}. You are covered by TravelCover Insurance. Emergency: +234 800 000 0000`
+    const passengerMessage = `Hello ${passenger.full_name}, your ${manifestData.departure} to ${manifestData.destination} trip with ${manifestData.company} on ${new Date(manifestData.trip_date).toLocaleDateString()} is active and insured. Ref: ${manifestData.manifest_reference || 'N/A'}. Support: +2348000000000.`
 
     const passengerResult = await sendTermiiSMS(
       passenger.phone_number,
@@ -121,7 +123,7 @@ export async function sendBulkSMS(passengers, manifestData) {
 
     // Send to next of kin
     results.total++
-    const nokMessage = `Hello ${passenger.next_of_kin_name}, ${passenger.full_name} is traveling from ${manifestData.departure} to ${manifestData.destination} on ${new Date(manifestData.trip_date).toLocaleDateString()} with ${manifestData.company}. Covered by travel insurance. Contact: +234 800 000 0000`
+    const nokMessage = `Travel update: ${passenger.full_name} is on trip ${manifestData.departure} to ${manifestData.destination} with ${manifestData.company} on ${new Date(manifestData.trip_date).toLocaleDateString()}. Insurance is active. Ref: ${manifestData.manifest_reference || 'N/A'}. Support: +2348000000000.`
 
     const nokResult = await sendTermiiSMS(
       passenger.next_of_kin_phone,

@@ -1,16 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
-import { sendBulkSMS, scheduleBulkSMS } from '../services/termiiService'
-import { sendBulkEmails, getActiveTemplates } from '../services/emailService'
-import { Send, CheckCircle, XCircle, Loader, Users, MessageSquare } from 'lucide-react'
-import { success, error as errorToast, warning } from '../utils/notifications'
-
-console.log('=== DEBUG INFO ===')
-console.log('Resend API Key:', import.meta.env.VITE_RESEND_API_KEY ? 'LOADED ✅' : 'MISSING ❌')
-console.log('Bulk SMS API Key:', import.meta.env.VITE_BULKSMS_API_KEY ? 'LOADED ✅' : 'MISSING ❌')
-console.log('Supabase URL:', import.meta.env.VITE_SUPABASE_URL ? 'LOADED ✅' : 'MISSING ❌')
-console.log('==================')
+import { getActiveTemplates } from '../services/emailService'
+import { sendImmediateNotifications, scheduleManifestNotifications } from '../services/notificationService'
+import { getTripDurationMs } from '../utils/tripTiming'
+import { Send, CheckCircle, XCircle, Loader, Users, MessageSquare, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { success, error as errorToast, warning, confirm as confirmToast } from '../utils/notifications'
 
 export default function SendSMS() {
   const location = useLocation()
@@ -30,6 +25,9 @@ export default function SendSMS() {
   const [emailResults, setEmailResults] = useState(null)
   const [emailTemplates, setEmailTemplates] = useState([])
   const [selectedTemplateId, setSelectedTemplateId] = useState(null)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   useEffect(() => {
     if (location.state?.manifestId) {
@@ -83,7 +81,42 @@ export default function SendSMS() {
   }
 }
 
-  async function handleSendSMS() {
+  function getOverridePreview() {
+    if (!scheduledDate || !scheduledTime) return null
+    const newDeparture = new Date(`${scheduledDate}T${scheduledTime}`)
+    if (!Number.isFinite(newDeparture.getTime())) return null
+
+    const durationMs = getTripDurationMs(manifest, route)
+    const newArrival = new Date(newDeparture.getTime() + durationMs)
+
+    return {
+      departure: newDeparture,
+      arrival: newArrival
+    }
+  }
+
+  async function handleSendNotifications() {
+    if (!manifest || !route || !company) {
+      errorToast('Missing trip details', 'Manifest, route, or company data is unavailable')
+      return
+    }
+
+    if (!passengers.length) {
+      warning('No passengers found for this manifest')
+      return
+    }
+
+    const hasInvalidNumbers = passengers.some((passenger) => {
+      const passengerPhone = passenger.phone_number?.trim()
+      const nextOfKinPhone = passenger.next_of_kin_phone?.trim()
+      return !passengerPhone || !nextOfKinPhone
+    })
+
+    if (hasInvalidNumbers) {
+      warning('Some passengers are missing phone numbers', 'Complete passenger and next of kin phone fields before sending')
+      return
+    }
+
     if (sendOption === 'scheduled') {
       if (!scheduledDate || !scheduledTime) {
         warning('Please select date and time for scheduled message')
@@ -97,28 +130,30 @@ export default function SendSMS() {
         return
       }
 
-      if (!window.confirm(`Schedule messages to be sent on ${scheduledDateTime.toLocaleString()}?`)) {
+      if (!(await confirmToast(`Schedule messages to be sent on ${scheduledDateTime.toLocaleString()}?`, { confirmText: 'Schedule' }))) {
         return
       }
 
       setSending(true)
 
       try {
-        const manifestData = {
-          company: company.company_name,
-          departure: route.departure_location,
-          destination: route.destination,
-          trip_date: manifest.trip_date
-        }
-
-        const smsResults = await scheduleBulkSMS(
+        const { updatedManifest, schedulingResult } = await scheduleManifestNotifications({
+          manifest,
+          route,
+          company,
           passengers,
-          manifestData,
-          scheduledDateTime.toISOString()
+          scheduledDate,
+          scheduledTime
+        })
+
+        setManifest(updatedManifest)
+
+        success(
+          'Messages scheduled successfully!',
+          `Queued ${schedulingResult.count || 0} rule-based message(s) using Journey Automation timing rules.`
         )
 
         setSending(false)
-        success('Messages scheduled successfully!', `Scheduled for ${scheduledDateTime.toLocaleString()}`)
         
         setTimeout(() => {
           navigate('/scheduled-messages')
@@ -138,35 +173,25 @@ export default function SendSMS() {
         confirmMessage += `\n\nAlso send ${emailCount} email(s) to those who provided email addresses.`
       }
       
-      if (!window.confirm(confirmMessage)) {
+      if (!(await confirmToast(confirmMessage.replace(/\n\n/g, ' '), { confirmText: 'Send now' }))) {
         return
       }
 
       setSending(true)
 
       try {
-        const manifestData = {
-          company: company.company_name,
-          departure: route.departure_location,
-          destination: route.destination,
-          trip_date: manifest.trip_date
-        }
+        const { smsResults, emailResults } = await sendImmediateNotifications({
+          passengers,
+          company,
+          route,
+          manifest,
+          sendEmails,
+          selectedTemplateId
+        })
 
-        console.log('=== STARTING SMS SEND ===')
-        console.log('Passengers:', passengers.length)
-        console.log('Manifest Data:', manifestData)
-
-        const smsResults = await sendBulkSMS(passengers, manifestData)
-        
-        console.log('SMS Results:', smsResults)
         setResults(smsResults)
 
-        let emailResults = null
-        if (sendEmails) {
-          console.log('=== STARTING EMAIL SEND ===')
-          console.log('Using template ID:', selectedTemplateId)
-          emailResults = await sendBulkEmails(passengers, manifestData, selectedTemplateId)
-          console.log('Email Results:', emailResults)
+        if (emailResults) {
           setEmailResults(emailResults)
         }
 
@@ -184,6 +209,30 @@ export default function SendSMS() {
     }
   }
 
+  const filteredPassengers = passengers.filter((passenger) => {
+    const q = searchTerm.trim().toLowerCase()
+    if (!q) return true
+
+    const text = [
+      passenger.full_name,
+      passenger.phone_number,
+      passenger.next_of_kin_name,
+      passenger.next_of_kin_phone,
+      passenger.email,
+      passenger.next_of_kin_email
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+
+    return text.includes(q)
+  })
+
+  const totalPages = Math.max(1, Math.ceil(filteredPassengers.length / pageSize))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const startIndex = (safeCurrentPage - 1) * pageSize
+  const paginatedPassengers = filteredPassengers.slice(startIndex, startIndex + pageSize)
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -194,9 +243,12 @@ export default function SendSMS() {
 
   return (
     <div>
-      <h2 className="text-3xl font-bold text-gray-800 mb-8">Send SMS Notifications</h2>
+      <div className="mb-6 rounded-2xl bg-gradient-to-r from-emerald-600 to-blue-600 text-white p-6 shadow-lg shadow-emerald-100">
+        <h2 className="text-3xl font-bold">Send Notifications</h2>
+        <p className="text-emerald-50 mt-2">Review trip details, choose delivery mode, and send notifications with confidence.</p>
+      </div>
 
-      <div className="bg-white rounded-lg shadow p-6 mb-6">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
         <h3 className="text-xl font-semibold mb-4">Trip Details</h3>
         <div className="grid grid-cols-2 gap-4">
           <div>
@@ -226,11 +278,24 @@ export default function SendSMS() {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow p-6 mb-6">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
         <h3 className="text-xl font-semibold mb-4 flex items-center">
           <Users className="mr-2" size={24} />
           Passengers ({passengers.length})
         </h3>
+        <div className="mb-4 relative">
+          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => {
+              setSearchTerm(e.target.value)
+              setCurrentPage(1)
+            }}
+            placeholder="Search passenger or next-of-kin"
+            className="w-full pl-10 pr-4 py-2.5 border border-slate-300 rounded-lg"
+          />
+        </div>
         <div className="max-h-64 overflow-y-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -242,7 +307,7 @@ export default function SendSMS() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {passengers.map((passenger) => (
+              {paginatedPassengers.map((passenger) => (
                 <tr key={passenger.id}>
                   <td className="px-4 py-2 text-sm">{passenger.full_name}</td>
                   <td className="px-4 py-2 text-sm">{passenger.phone_number}</td>
@@ -253,9 +318,41 @@ export default function SendSMS() {
             </tbody>
           </table>
         </div>
+        <div className="mt-4 flex items-center justify-between">
+          <p className="text-sm text-gray-600">Showing {startIndex + 1}-{Math.min(startIndex + pageSize, filteredPassengers.length)} of {filteredPassengers.length}</p>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">Rows</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="px-2 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+            </select>
+            <button
+              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              disabled={safeCurrentPage === 1}
+              className="btn-secondary px-3 py-2 disabled:opacity-50"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              disabled={safeCurrentPage === totalPages}
+              className="btn-secondary px-3 py-2 disabled:opacity-50"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow p-6 mb-6">
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
         <h3 className="text-lg font-semibold mb-4">Send Options</h3>
         <div className="flex space-x-4">
           <label className="flex items-center space-x-2 cursor-pointer">
@@ -282,6 +379,13 @@ export default function SendSMS() {
         
         {sendOption === 'scheduled' && (
           <div className="mt-4">
+            {getOverridePreview() && (
+              <div className="mb-3 bg-indigo-50 border-l-4 border-indigo-600 p-3 rounded">
+                <p className="text-sm text-indigo-900">
+                  <strong>Override Preview:</strong> New departure is {getOverridePreview().departure.toLocaleString()} and auto-calculated arrival is {getOverridePreview().arrival.toLocaleString()}.
+                </p>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4 mb-3">
               <div>
                 <label className="block text-sm font-medium mb-1">Date</label>
@@ -311,7 +415,7 @@ export default function SendSMS() {
         )}
       </div>
 
-      <div className="bg-purple-50 border-l-4 border-purple-600 p-4 rounded mb-6">
+      <div className="bg-purple-50 border border-purple-200 p-4 rounded-xl mb-6">
         <div className="flex items-center space-x-2 mb-3">
           <input
             type="checkbox"
@@ -348,7 +452,7 @@ export default function SendSMS() {
               </p>
             )}
             <p className="text-xs text-gray-500 mt-2">
-              💡 Manage templates in <a href="/email-templates" className="text-purple-600 hover:underline">Email Templates</a> page
+              💡 Manage templates in <a href="/admin-settings?tab=email-templates" className="text-purple-600 hover:underline">Admin Settings → Email Templates</a>
             </p>
           </div>
         )}
@@ -356,9 +460,9 @@ export default function SendSMS() {
 
       {!results && (
         <button
-          onClick={handleSendSMS}
+          onClick={handleSendNotifications}
           disabled={sending}
-          className="w-full bg-green-600 text-white py-4 rounded-lg text-lg font-semibold flex items-center justify-center space-x-3 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full btn-primary py-4 text-lg font-semibold flex items-center justify-center space-x-3"
         >
           {sending ? (
             <>
@@ -368,14 +472,14 @@ export default function SendSMS() {
           ) : (
             <>
               <Send size={24} />
-              <span>{sendOption === 'scheduled' ? 'Schedule Messages' : 'Send SMS to All'}</span>
+              <span>{sendOption === 'scheduled' ? 'Schedule Messages' : 'Send Notifications to All'}</span>
             </>
           )}
         </button>
       )}
 
       {results && (
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
           <h3 className="text-xl font-semibold mb-4">SMS Sending Results</h3>
           
           <div className="grid grid-cols-3 gap-4 mb-6">
@@ -419,7 +523,7 @@ export default function SendSMS() {
 
           <button
             onClick={() => navigate('/')}
-            className="w-full mt-6 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700"
+            className="w-full mt-6 btn-primary py-3"
           >
             Back to Dashboard
           </button>
@@ -427,7 +531,7 @@ export default function SendSMS() {
       )}
 
       {emailResults && (
-        <div className="bg-white rounded-lg shadow p-6 mt-6">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mt-6">
           <h3 className="text-xl font-semibold mb-4">Email Sending Results</h3>
           
           <div className="grid grid-cols-4 gap-4 mb-6">

@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { sendTermiiSMS } from './termiiService'
 
 /**
  * Calculate scheduled SMS times based on route duration and trip date/time
@@ -34,11 +35,69 @@ export function applyTimingOffset(baseTime, timingType, minutesOffset) {
   return sendTime
 }
 
+function getSafeMessageType(timingType) {
+  return timingType === 'before_end' ? 'arrival_30min' : 'departure_30min'
+}
+
+function buildDefaultScheduledMessage(passenger, manifest, route, rule) {
+  const tripDate = new Date(manifest.trip_date).toLocaleDateString('en-US', {
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  })
+
+  const referenceTimeLabel = rule.timing_type === 'before_end'
+    ? `${rule.minutes_offset} mins before arrival`
+    : `${rule.minutes_offset} mins after departure`
+
+  const journeyLabel = `${route.departure_location} → ${route.destination}`
+  const companyLabel = manifest.company_name || 'your transport operator'
+  const ref = manifest.manifest_reference || 'N/A'
+
+  if (rule.recipient_type === 'next_of_kin') {
+    return `Travel update: ${passenger.full_name} is on trip ${journeyLabel} with ${companyLabel} (${tripDate}). Checkpoint: ${referenceTimeLabel}. Insurance is active. Ref: ${ref}. Support: +2348000000000.`
+  }
+
+  return `Hello ${passenger.full_name}, your ${journeyLabel} trip with ${companyLabel} (${tripDate}) is active and insured. Checkpoint: ${referenceTimeLabel}. Ref: ${ref}. Support: +2348000000000.`
+}
+
 /**
  * Create scheduled SMS for a manifest
  */
 export async function scheduleMessagesForManifest(manifest, passengers, route) {
   try {
+    const defaultRules = [
+      {
+        rule_name: 'Passenger 30 mins after departure',
+        recipient_type: 'passenger',
+        timing_type: 'after_start',
+        minutes_offset: 30,
+        sms_templates: null
+      },
+      {
+        rule_name: 'Next of Kin 30 mins after departure',
+        recipient_type: 'next_of_kin',
+        timing_type: 'after_start',
+        minutes_offset: 30,
+        sms_templates: null
+      },
+      {
+        rule_name: 'Passenger 30 mins before arrival',
+        recipient_type: 'passenger',
+        timing_type: 'before_end',
+        minutes_offset: 30,
+        sms_templates: null
+      },
+      {
+        rule_name: 'Next of Kin 30 mins before arrival',
+        recipient_type: 'next_of_kin',
+        timing_type: 'before_end',
+        minutes_offset: 30,
+        sms_templates: null
+      }
+    ]
+
     // Get active schedule rules
     const { data: rules, error: rulesError } = await supabase
       .from('sms_schedule_rules')
@@ -49,6 +108,16 @@ export async function scheduleMessagesForManifest(manifest, passengers, route) {
       .eq('is_active', true)
 
     if (rulesError) throw rulesError
+
+    const applicableConfiguredRules = (rules || []).filter((rule) => {
+      const matchesCompany = !rule.company_id || rule.company_id === route?.company_id || rule.company_id === manifest?.company_id
+      const matchesRoute = !rule.route_id || rule.route_id === route?.id || rule.route_id === manifest?.route_id
+      return matchesCompany && matchesRoute
+    })
+
+    const configuredRules = applicableConfiguredRules.length > 0
+      ? applicableConfiguredRules
+      : defaultRules
 
     // Calculate trip times
     const { tripStart, tripEnd } = calculateScheduledTimes(
@@ -66,7 +135,7 @@ export async function scheduleMessagesForManifest(manifest, passengers, route) {
     // For each passenger
     for (const passenger of passengers) {
       // For each rule
-      for (const rule of rules) {
+      for (const rule of configuredRules) {
         // Check if rule applies to this recipient type
         if (rule.recipient_type === 'passenger' || rule.recipient_type === 'next_of_kin') {
           const phone = rule.recipient_type === 'passenger' 
@@ -79,16 +148,17 @@ export async function scheduleMessagesForManifest(manifest, passengers, route) {
 
           // Generate message content
           const messageContent = generateMessageFromTemplate(
-            rule.sms_templates?.message_content || rule.rule_name,
+            rule.sms_templates?.message_content || null,
             passenger,
             manifest,
-            route
+            route,
+            rule
           )
 
           scheduledMessages.push({
             manifest_id: manifest.id,
             passenger_id: passenger.id,
-            schedule_rule_id: rule.id,
+            message_type: getSafeMessageType(rule.timing_type),
             recipient_type: rule.recipient_type,
             phone_number: phone,
             message_content: messageContent,
@@ -99,9 +169,17 @@ export async function scheduleMessagesForManifest(manifest, passengers, route) {
       }
     }
 
+    if (scheduledMessages.length === 0) {
+      return {
+        success: true,
+        count: 0,
+        messages: []
+      }
+    }
+
     // Insert all scheduled messages
     const { data, error } = await supabase
-      .from('scheduled_sms')
+      .from('scheduled_jobs')
       .insert(scheduledMessages)
 
     if (error) throw error
@@ -123,9 +201,9 @@ export async function scheduleMessagesForManifest(manifest, passengers, route) {
 /**
  * Generate message content from template
  */
-function generateMessageFromTemplate(template, passenger, manifest, route) {
+function generateMessageFromTemplate(template, passenger, manifest, route, rule) {
   if (!template) {
-    return `Dear ${passenger.full_name}, your journey from ${route.departure_location} to ${route.destination} is underway. You are covered by travel insurance.`
+    return buildDefaultScheduledMessage(passenger, manifest, route, rule)
   }
 
   return template
@@ -134,6 +212,9 @@ function generateMessageFromTemplate(template, passenger, manifest, route) {
     .replace(/{departure}/g, route.departure_location)
     .replace(/{destination}/g, route.destination)
     .replace(/{company}/g, manifest.company_name || 'Transport Company')
+    .replace(/{manifest_reference}/g, manifest.manifest_reference || 'N/A')
+    .replace(/{departure_time}/g, manifest.departure_time || '')
+    .replace(/{arrival_time}/g, manifest.arrival_time || '')
     .replace(/{trip_date}/g, new Date(manifest.trip_date).toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
@@ -145,11 +226,11 @@ function generateMessageFromTemplate(template, passenger, manifest, route) {
 /**
  * Get pending scheduled messages ready to send
  */
-export async function getPendingMessages() {
+async function getPendingMessages() {
   const now = new Date().toISOString()
 
   const { data, error } = await supabase
-    .from('scheduled_sms')
+    .from('scheduled_jobs')
     .select(`
       *,
       passengers (
@@ -174,26 +255,33 @@ export async function getPendingMessages() {
 /**
  * Mark message as sent
  */
-export async function markMessageAsSent(messageId) {
+async function markMessageAsSent(messageId) {
   const { error } = await supabase
-    .from('scheduled_sms')
+    .from('scheduled_jobs')
     .update({
       status: 'sent',
-      sent_at: new Date().toISOString()
+      executed_at: new Date().toISOString()
     })
     .eq('id', messageId)
 
   if (error) {
-    console.error('Error marking message as sent:', error)
+    const { error: deleteError } = await supabase
+      .from('scheduled_jobs')
+      .delete()
+      .eq('id', messageId)
+
+    if (deleteError) {
+      console.error('Error marking/deleting sent message:', error, deleteError)
+    }
   }
 }
 
 /**
  * Mark message as failed
  */
-export async function markMessageAsFailed(messageId, errorMessage) {
+async function markMessageAsFailed(messageId, errorMessage) {
   const { error } = await supabase
-    .from('scheduled_sms')
+    .from('scheduled_jobs')
     .update({
       status: 'failed',
       error_message: errorMessage
@@ -204,3 +292,82 @@ export async function markMessageAsFailed(messageId, errorMessage) {
     console.error('Error marking message as failed:', error)
   }
 }
+
+/**
+ * Process all due scheduled jobs (pending and <= now)
+ */
+export async function processDueScheduledJobs() {
+  const rpcResults = await processDueScheduledJobsViaRpc()
+  if (rpcResults.success) {
+    return rpcResults
+  }
+
+  const dueMessages = await getPendingMessages()
+
+  const results = {
+    mode: 'client-fallback',
+    processed: 0,
+    sent: 0,
+    failed: 0,
+    total: dueMessages.length
+  }
+
+  for (const message of dueMessages) {
+    try {
+      results.processed++
+
+      const sendResult = await sendTermiiSMS(
+        message.phone_number,
+        message.message_content,
+        message.passenger_id,
+        message.recipient_type
+      )
+
+      if (sendResult.success) {
+        await markMessageAsSent(message.id)
+        results.sent++
+      } else {
+        await markMessageAsFailed(message.id, sendResult.error || 'Unknown send error')
+        results.failed++
+      }
+    } catch (err) {
+      await markMessageAsFailed(message.id, err.message)
+      results.failed++
+    }
+  }
+
+  return results
+}
+
+/**
+ * Run due jobs through Supabase RPC (preferred for background-safe execution)
+ */
+export async function processDueScheduledJobsViaRpc() {
+  try {
+    const { data, error } = await supabase.rpc('process_due_scheduled_jobs')
+
+    if (error) {
+      return {
+        success: false,
+        error: error.message
+      }
+    }
+
+    return {
+      success: true,
+      mode: 'rpc',
+      processed: data?.processed || 0,
+      sent: data?.sent || 0,
+      failed: data?.failed || 0,
+      email_sent: data?.email_sent || 0,
+      email_failed: data?.email_failed || 0,
+      total: data?.total || 0
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err.message
+    }
+  }
+}
+

@@ -82,6 +82,8 @@ export function renderTemplate(template, passenger, manifestData) {
     company: manifestData.company,
     departure: manifestData.departure,
     destination: manifestData.destination,
+    manifest_reference: manifestData.manifest_reference || 'N/A',
+    support_phone: '+234 800 000 0000',
     trip_date: new Date(manifestData.trip_date).toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
@@ -165,7 +167,7 @@ export async function sendBulkEmails(passengers, manifestData, templateId = null
     if (!passengerTemplate) {
       console.warn('No passenger template found, using fallback')
       passengerTemplate = {
-        subject: 'Safe Journey - {departure} to {destination}',
+        subject: 'Trip Cover Active: {departure} → {destination}',
         body_html: generateFallbackPassengerEmail()
       }
     }
@@ -173,7 +175,7 @@ export async function sendBulkEmails(passengers, manifestData, templateId = null
     if (!nokTemplate) {
       console.warn('No next of kin template found, using fallback')
       nokTemplate = {
-        subject: '{passenger_name} - Journey Update',
+        subject: 'Journey Update for {passenger_name}',
         body_html: generateFallbackNextOfKinEmail()
       }
     }
@@ -285,23 +287,17 @@ function generateFallbackPassengerEmail() {
           </tr>
           <tr>
             <td style="padding: 40px 30px;">
-              <h2 style="color: #2563eb; margin-top: 0;">Dear {passenger_name},</h2>
+              <h2 style="color: #2563eb; margin-top: 0;">Hello {passenger_name},</h2>
               <p style="font-size: 16px; line-height: 1.6; color: #333333;">
-                We wish you a <strong>safe journey</strong> on your trip from <strong>{departure}</strong> 
-                to <strong>{destination}</strong> with <strong>{company}</strong>.
+                Your trip from <strong>{departure}</strong> to <strong>{destination}</strong> with <strong>{company}</strong> is active and covered.
               </p>
               <div style="background-color: #eff6ff; border-left: 4px solid #2563eb; padding: 15px; margin: 25px 0; border-radius: 5px;">
-                <p style="margin: 0; font-size: 15px; color: #1e40af;">
-                  <strong>📅 Trip Date:</strong> {trip_date}
-                </p>
+                <p style="margin: 0 0 8px 0; font-size: 15px; color: #1e40af;"><strong>Trip Date:</strong> {trip_date}</p>
+                <p style="margin: 0 0 8px 0; font-size: 15px; color: #1e40af;"><strong>Route:</strong> {departure} → {destination}</p>
+                <p style="margin: 0; font-size: 15px; color: #1e40af;"><strong>Reference:</strong> {manifest_reference}</p>
               </div>
-              <p style="font-size: 16px; line-height: 1.6; color: #333333;">
-                You are covered by <strong style="color: #2563eb;">TravelCover Insurance</strong> throughout your journey.
-              </p>
               <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 25px 0; border-radius: 5px;">
-                <p style="margin: 0; font-size: 14px; color: #92400e;">
-                  <strong>🚨 Emergency Contact:</strong> +234 800 000 0000
-                </p>
+                <p style="margin: 0; font-size: 14px; color: #92400e;"><strong>Emergency Contact:</strong> {support_phone}</p>
               </div>
               <p style="font-size: 14px; color: #666666; margin-top: 30px;">
                 Best regards,<br>
@@ -350,22 +346,15 @@ function generateFallbackNextOfKinEmail() {
             <td style="padding: 40px 30px;">
               <h2 style="color: #059669; margin-top: 0;">Hello {next_of_kin_name},</h2>
               <p style="font-size: 16px; line-height: 1.6; color: #333333;">
-                This is to inform you that <strong>{passenger_name}</strong> is traveling from 
-                <strong>{departure}</strong> to <strong>{destination}</strong> 
-                with <strong>{company}</strong>.
+                This is a journey update for <strong>{passenger_name}</strong>, traveling from <strong>{departure}</strong> to <strong>{destination}</strong> with <strong>{company}</strong>.
               </p>
               <div style="background-color: #d1fae5; border-left: 4px solid #10b981; padding: 15px; margin: 25px 0; border-radius: 5px;">
-                <p style="margin: 0; font-size: 15px; color: #065f46;">
-                  <strong>📅 Travel Date:</strong> {trip_date}
-                </p>
-              </div>
-              <p style="font-size: 16px; line-height: 1.6; color: #333333;">
-                They are covered by travel insurance throughout their journey.
+                <p style="margin: 0 0 8px 0; font-size: 15px; color: #065f46;"><strong>Travel Date:</strong> {trip_date}</p>
+                <p style="margin: 0 0 8px 0; font-size: 15px; color: #065f46;"><strong>Route:</strong> {departure} → {destination}</p>
+                <p style="margin: 0; font-size: 15px; color: #065f46;"><strong>Reference:</strong> {manifest_reference}</p>
               </p>
               <div style="background-color: #dbeafe; border-left: 4px solid #3b82f6; padding: 15px; margin: 25px 0; border-radius: 5px;">
-                <p style="margin: 0; font-size: 14px; color: #1e40af;">
-                  <strong>📞 For inquiries:</strong> +234 800 000 0000
-                </p>
+                <p style="margin: 0; font-size: 14px; color: #1e40af;"><strong>Support Contact:</strong> {support_phone}</p>
               </div>
               <p style="font-size: 14px; color: #666666; margin-top: 30px;">
                 Best regards,<br>
