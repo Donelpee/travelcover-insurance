@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Camera, Upload, ArrowRight, Loader, X } from 'lucide-react'
 import Tesseract from 'tesseract.js'
 import { success, error, warning, info } from '../utils/notifications'
-import { extractPassengerData } from '../services/aiService'
+import { extractPassengerData, extractPassengerDataFromImage } from '../services/aiService'
 
 export default function CaptureManifest() {
   const [image, setImage] = useState(null)
@@ -15,28 +15,72 @@ export default function CaptureManifest() {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const fileInputRef = useRef(null)
+  const mobileCameraInputRef = useRef(null)
   const [cameraActive, setCameraActive] = useState(false)
   const navigate = useNavigate()
 
+  function setImageFromBlob(blob) {
+    setImage(blob)
+    const url = URL.createObjectURL(blob)
+    setImagePreview(url)
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(reader.result)
+      reader.onerror = reject
+      reader.readAsDataURL(blob)
+    })
+  }
+
+  function openMobileNativeCamera() {
+    mobileCameraInputRef.current?.click()
+  }
+
   async function startCamera() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      warning('Camera API unavailable', 'Opening your phone camera instead')
+      openMobileNativeCamera()
+      return
+    }
+
+    if (!window.isSecureContext) {
+      warning('Secure context required', 'Camera preview requires HTTPS; opening phone camera instead')
+      openMobileNativeCamera()
+      return
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          facingMode: 'environment',
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        } 
-      })
+      let stream
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: false
+        })
+      } catch (primaryError) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false
+        })
+      }
       
       if (videoRef.current) {
         videoRef.current.srcObject = stream
+        videoRef.current.muted = true
         await videoRef.current.play()
         setCameraActive(true)
         success('Camera ready!', 'Position the manifest clearly')
       }
     } catch (err) {
       console.error('Error accessing camera:', err)
-      error('Camera access denied', 'Please allow camera permissions in browser settings')
+      warning('Live camera unavailable', 'Opening your phone camera capture instead')
+      openMobileNativeCamera()
     }
   }
 
@@ -58,24 +102,25 @@ export default function CaptureManifest() {
       return
     }
     
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
+    const width = video.videoWidth || 1280
+    const height = video.videoHeight || 720
+
+    canvas.width = width
+    canvas.height = height
     
     const context = canvas.getContext('2d')
     context.drawImage(video, 0, 0, canvas.width, canvas.height)
     
     canvas.toBlob((blob) => {
       if (blob) {
-        setImage(blob)
-        const url = URL.createObjectURL(blob)
-        setImagePreview(url)
+        setImageFromBlob(blob)
         stopCamera()
         success('Photo captured!', 'Ready to process')
       }
     }, 'image/jpeg', 0.95)
   }
 
-  function handleFileUpload(e) {
+  function handleFileUpload(e, source = 'upload') {
     const file = e.target.files[0]
     if (file) {
       if (!file.type.startsWith('image/')) {
@@ -89,12 +134,12 @@ export default function CaptureManifest() {
       }
 
       if (file.type.startsWith('image/')) {
-        setImage(file)
-        const url = URL.createObjectURL(file)
-        setImagePreview(url)
-        success('Image uploaded!', 'Ready to process')
+        setImageFromBlob(file)
+        success(source === 'camera' ? 'Photo captured!' : 'Image uploaded!', 'Ready to process')
       }
     }
+
+    e.target.value = ''
   }
 
   function preprocessImage(imageUrl) {
@@ -142,7 +187,24 @@ export default function CaptureManifest() {
     setExtractedPassengers([])
 
     try {
-      info('Processing image...', 'This may take 30-60 seconds')
+      info('Analyzing image with AI...', 'Extracting passengers from the manifest photo')
+
+      try {
+        const imageDataUrl = await blobToDataUrl(image)
+        const parsedPassengersFromImage = await extractPassengerDataFromImage(imageDataUrl)
+
+        if (Array.isArray(parsedPassengersFromImage) && parsedPassengersFromImage.length > 0) {
+          setExtractedPassengers(parsedPassengersFromImage)
+          setExtractedText('AI extracted passenger details directly from the image.')
+          success('Passengers auto-detected', `${parsedPassengersFromImage.length} passenger${parsedPassengersFromImage.length === 1 ? '' : 's'} extracted`)
+          setProcessing(false)
+          return
+        }
+      } catch (visionError) {
+        console.error('AI image extraction error:', visionError)
+      }
+
+      info('Running OCR fallback...', 'Trying text extraction from the image')
 
       const processedImage = await preprocessImage(imagePreview)
 
@@ -230,13 +292,21 @@ export default function CaptureManifest() {
                 </h3>
                 
                 {!cameraActive ? (
-                  <button
-                    onClick={startCamera}
-                    className="w-full bg-blue-600 text-white py-4 rounded-lg flex items-center justify-center space-x-2 hover:bg-blue-700 transition-colors"
-                  >
-                    <Camera size={24} />
-                    <span>Open Camera</span>
-                  </button>
+                  <div className="space-y-3">
+                    <button
+                      onClick={startCamera}
+                      className="w-full bg-blue-600 text-white py-4 rounded-lg flex items-center justify-center space-x-2 hover:bg-blue-700 transition-colors"
+                    >
+                      <Camera size={24} />
+                      <span>Open Camera</span>
+                    </button>
+                    <button
+                      onClick={openMobileNativeCamera}
+                      className="w-full bg-slate-100 text-slate-700 py-3 rounded-lg hover:bg-slate-200 transition-colors text-sm"
+                    >
+                      Use Phone Camera (Mobile)
+                    </button>
+                  </div>
                 ) : (
                   <div className="space-y-4">
                     <div className="relative bg-black rounded-lg overflow-hidden">
@@ -300,6 +370,15 @@ export default function CaptureManifest() {
                   Supports: JPG, PNG, JPEG
                 </p>
               </div>
+
+              <input
+                ref={mobileCameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(e) => handleFileUpload(e, 'camera')}
+                className="hidden"
+              />
             </div>
           ) : (
             <div className="space-y-4">
