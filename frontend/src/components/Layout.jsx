@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { Home, Truck, FileText, MessageSquare, Users, Settings, Clock, ShieldCheck } from 'lucide-react'
+import { Home, Truck, FileText, MessageSquare, Users, Settings, Clock, ShieldCheck, LogOut } from 'lucide-react'
+import { usePermissions } from '../contexts/PermissionsContext'
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: Home },
@@ -12,6 +13,12 @@ const navItems = [
 ]
 
 export default function Layout() {
+  const { currentUser, signOut } = usePermissions()
+
+  async function handleSignOut() {
+    await signOut()
+  }
+
   return (
     <div className="min-h-screen bg-slate-100">
       <div className="flex min-h-screen">
@@ -56,7 +63,14 @@ export default function Layout() {
 
         <div className="flex-1 flex flex-col min-w-0">
           <header className="h-16 border-b border-slate-200 bg-white/95 backdrop-blur px-6 flex items-center justify-between shadow-sm">
-            <p className="text-sm font-medium text-slate-700">Welcome back, Admin</p>
+            <p className="text-sm font-medium text-slate-700">Welcome back, {currentUser?.full_name || 'Admin'}</p>
+            <button
+              onClick={handleSignOut}
+              className="btn-secondary px-3 py-2 flex items-center gap-2"
+            >
+              <LogOut size={16} />
+              <span>Sign Out</span>
+            </button>
           </header>
 
           <main className="flex-1 p-6 lg:p-8 overflow-x-hidden">

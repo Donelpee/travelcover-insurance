@@ -7,12 +7,15 @@ export function PermissionsProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null)
   const [permissions, setPermissions] = useState([])
   const [loading, setLoading] = useState(true)
+  const [isSignedOut, setIsSignedOut] = useState(false)
 
   useEffect(() => {
     // In a real app, you'd get this from authentication
     // For now, we'll simulate with a Super Admin
-    loadUserPermissions()
-  }, [])
+    if (!isSignedOut) {
+      loadUserPermissions()
+    }
+  }, [isSignedOut])
 
   async function loadUserPermissions() {
     try {
@@ -63,6 +66,23 @@ export function PermissionsProvider({ children }) {
     return permissionKeys.every(key => permissions.includes(key))
   }
 
+  async function signOut() {
+    try {
+      await supabase.auth.signOut()
+    } catch (error) {
+      console.error('Error signing out from auth session:', error)
+    }
+
+    setCurrentUser(null)
+    setPermissions([])
+    setIsSignedOut(true)
+  }
+
+  async function signInAgain() {
+    setIsSignedOut(false)
+    await loadUserPermissions()
+  }
+
   return (
     <PermissionsContext.Provider value={{
       currentUser,
@@ -70,6 +90,8 @@ export function PermissionsProvider({ children }) {
       hasPermission,
       hasAnyPermission,
       hasAllPermissions,
+      signOut,
+      signInAgain,
       loading
     }}>
       {children}

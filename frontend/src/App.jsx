@@ -13,10 +13,12 @@ import AdminSettings from './pages/AdminSettings'
 import { Toaster } from 'react-hot-toast'
 import JourneyAutomation from './pages/JourneyAutomation'
 import { processDueNotifications } from './services/notificationService'
+import { usePermissions } from './contexts/PermissionsContext'
 
 
 function App() {
   const isProcessingRef = useRef(false)
+  const { currentUser, loading, signInAgain } = usePermissions()
 
   useEffect(() => {
     let isMounted = true
@@ -50,6 +52,37 @@ function App() {
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [])
+
+  if (!loading && !currentUser) {
+    return (
+      <>
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            duration: 3500,
+            style: {
+              border: '1px solid #e2e8f0',
+              background: '#ffffff',
+              color: '#0f172a',
+              boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)'
+            }
+          }}
+        />
+        <div className="min-h-screen bg-slate-100 flex items-center justify-center p-6">
+          <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center">
+            <h1 className="text-2xl font-bold text-slate-800">You are signed out</h1>
+            <p className="text-sm text-slate-600 mt-2">Your admin session has ended. Sign in again to continue.</p>
+            <button
+              onClick={signInAgain}
+              className="btn-primary w-full mt-6"
+            >
+              Sign In Again
+            </button>
+          </div>
+        </div>
+      </>
+    )
+  }
 
   return ( 
     <>
