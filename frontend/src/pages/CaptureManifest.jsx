@@ -306,6 +306,9 @@ export default function CaptureManifest() {
                     >
                       Use Phone Camera (Mobile)
                     </button>
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      On iPhone (Safari): allow camera permission when prompted, and use HTTPS. If live preview does not open, tap <strong>Use Phone Camera (Mobile)</strong>.
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-4">
