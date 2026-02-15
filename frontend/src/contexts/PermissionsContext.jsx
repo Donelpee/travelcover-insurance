@@ -8,6 +8,8 @@ export function PermissionsProvider({ children }) {
   const [permissions, setPermissions] = useState([])
   const [loading, setLoading] = useState(true)
   const [isSignedOut, setIsSignedOut] = useState(false)
+  const [cachedUser, setCachedUser] = useState(null)
+  const [cachedPermissions, setCachedPermissions] = useState([])
 
   useEffect(() => {
     // In a real app, you'd get this from authentication
@@ -67,6 +69,9 @@ export function PermissionsProvider({ children }) {
   }
 
   async function signOut() {
+    setCachedUser(currentUser)
+    setCachedPermissions(permissions)
+
     try {
       await supabase.auth.signOut()
     } catch (error) {
@@ -79,6 +84,13 @@ export function PermissionsProvider({ children }) {
   }
 
   async function signInAgain() {
+    if (cachedUser) {
+      setCurrentUser(cachedUser)
+      setPermissions(cachedPermissions)
+      setIsSignedOut(false)
+      return
+    }
+
     setIsSignedOut(false)
     await loadUserPermissions()
   }
