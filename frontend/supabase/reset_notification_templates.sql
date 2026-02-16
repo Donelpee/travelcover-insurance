@@ -27,7 +27,7 @@ begin
     values (
       'TravelCover Unified Journey SMS',
       'general',
-      'TravelCover {stage_label}: {passenger_name} on {departure} to {destination} with {company}. Travel date: {trip_date}. Reference: {manifest_reference}. For urgent support, call +234 800 000 0000.',
+      'TravelCover {stage_label}: {stage_message} Trip: {departure} to {destination} with {company} on {trip_date}. Reference: {manifest_reference}. Support: {support_phone}.',
       true
     );
   exception
@@ -42,13 +42,13 @@ begin
       (
         'TravelCover Unified Journey SMS (Passenger)',
         'passenger',
-        'TravelCover {stage_label}: {passenger_name} on {departure} to {destination} with {company}. Travel date: {trip_date}. Reference: {manifest_reference}. For urgent support, call +234 800 000 0000.',
+        'TravelCover {stage_label}: {stage_message} Trip: {departure} to {destination} with {company} on {trip_date}. Reference: {manifest_reference}. Support: {support_phone}.',
         true
       ),
       (
         'TravelCover Unified Journey SMS (Next of Kin)',
         'next_of_kin',
-        'TravelCover {stage_label}: {passenger_name} on {departure} to {destination} with {company}. Travel date: {trip_date}. Reference: {manifest_reference}. For urgent support, call +234 800 000 0000.',
+        'TravelCover {stage_label}: {stage_message} Trip: {departure} to {destination} with {company} on {trip_date}. Reference: {manifest_reference}. Support: {support_phone}.',
         true
       );
   end;
@@ -65,7 +65,7 @@ insert into public.email_templates (
 values (
   'TravelCover Unified Journey Email',
   'general',
-  'TravelCover Journey Update • {departure} to {destination}',
+  'TravelCover {stage_label} • {departure} to {destination}',
   '<!DOCTYPE html>
 <html>
 <head>
@@ -79,17 +79,14 @@ values (
         <table role="presentation" width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #dbeafe;">
           <tr>
             <td style="background:linear-gradient(135deg,#1d4ed8,#0ea5e9);padding:24px 28px;">
-              <h1 style="margin:0;color:#ffffff;font-size:24px;line-height:1.3;font-weight:700;">TravelCover Journey Notification</h1>
+              <h1 style="margin:0;color:#ffffff;font-size:24px;line-height:1.3;font-weight:700;">TravelCover {stage_label}</h1>
               <p style="margin:8px 0 0;color:#e0f2fe;font-size:14px;line-height:1.5;">Reliable protection and timely trip updates for passengers and their families.</p>
             </td>
           </tr>
           <tr>
             <td style="padding:28px;">
-              <p style="margin:0 0 14px;font-size:16px;line-height:1.6;">Hello <strong>{passenger_name}</strong>,</p>
-              <p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#334155;">
-                This is to confirm that the journey from <strong>{departure}</strong> to <strong>{destination}</strong>
-                with <strong>{company}</strong> on <strong>{trip_date}</strong> is active and covered by TravelCover.
-              </p>
+              <p style="margin:0 0 14px;font-size:16px;line-height:1.6;">Hello <strong>{recipient_name}</strong>,</p>
+              <p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#334155;">{stage_message}</p>
 
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0;border:1px solid #dbeafe;border-radius:12px;overflow:hidden;">
                 <tr>

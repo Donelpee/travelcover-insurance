@@ -52,20 +52,21 @@ function buildDefaultScheduledMessage(passenger, manifest, route, rule) {
   const ref = manifest.manifest_reference || 'N/A'
 
   const isArrivalReminder = rule.timing_type === 'before_end'
+  const supportPhone = '+234 800 000 0000'
 
   if (isArrivalReminder) {
     if (rule.recipient_type === 'next_of_kin') {
-      return `TravelCover update for ${passenger.next_of_kin_name}: ${passenger.full_name} is expected to arrive in about ${rule.minutes_offset} minutes on the ${journeyLabel} trip with ${companyLabel}. Date: ${tripDate}. Ref: ${ref}. Support: +234 800 000 0000.`
+      return `TravelCover Family Reminder: Hello ${passenger.next_of_kin_name}, ${passenger.full_name} is approximately ${rule.minutes_offset} minutes from arrival at ${route.destination} on the ${journeyLabel} trip with ${companyLabel}. Travel date: ${tripDate}. Reference: ${ref}. Support: ${supportPhone}.`
     }
 
-    return `TravelCover arrival alert: Hello ${passenger.full_name}, you are expected to arrive at your destination in about ${rule.minutes_offset} minutes on your ${journeyLabel} trip with ${companyLabel}. Date: ${tripDate}. Ref: ${ref}. Support: +234 800 000 0000.`
+    return `TravelCover Arrival Reminder: Hi ${passenger.full_name}, you are approximately ${rule.minutes_offset} minutes from arrival at ${route.destination} on your ${journeyLabel} trip with ${companyLabel}. Your cover remains active through trip completion. Travel date: ${tripDate}. Reference: ${ref}. Support: ${supportPhone}.`
   }
 
   if (rule.recipient_type === 'next_of_kin') {
-    return `TravelCover departure confirmation for ${passenger.next_of_kin_name}: ${passenger.full_name} has departed on the ${journeyLabel} trip with ${companyLabel}. Date: ${tripDate}. Ref: ${ref}. For assistance, call +234 800 000 0000.`
+    return `TravelCover Family Update: Hello ${passenger.next_of_kin_name}, ${passenger.full_name} has departed from ${route.departure_location} to ${route.destination} with ${companyLabel}. Travel date: ${tripDate}. Reference: ${ref}. Support: ${supportPhone}.`
   }
 
-  return `TravelCover departure confirmation: Hello ${passenger.full_name}, your ${journeyLabel} trip with ${companyLabel} has been confirmed and cover is active. Date: ${tripDate}. Ref: ${ref}. Support: +234 800 000 0000.`
+  return `TravelCover Departure Update: Hi ${passenger.full_name}, your journey from ${route.departure_location} to ${route.destination} with ${companyLabel} has departed and your cover is active. Travel date: ${tripDate}. Reference: ${ref}. Support: ${supportPhone}.`
 }
 
 function resolveSmsTemplateForRecipient(templates, recipientType) {
@@ -79,21 +80,30 @@ function resolveSmsTemplateForRecipient(templates, recipientType) {
 }
 
 function getManifestArrivalDateTime(manifest, route) {
-  if (manifest?.trip_date && manifest?.arrival_time) {
-    const parsedArrival = new Date(`${manifest.trip_date}T${manifest.arrival_time}`)
-    if (Number.isFinite(parsedArrival.getTime())) {
-      return parsedArrival
-    }
-  }
+  let departureDateTime = null
 
   if (manifest?.trip_date && manifest?.departure_time) {
     const parsedDeparture = new Date(`${manifest.trip_date}T${manifest.departure_time}`)
     if (Number.isFinite(parsedDeparture.getTime())) {
-      const durationMinutes = Number.isFinite(Number(route?.duration_hours))
-        ? Math.max(1, Math.round(Number(route.duration_hours) * 60))
-        : 8 * 60
-      return new Date(parsedDeparture.getTime() + durationMinutes * 60000)
+      departureDateTime = parsedDeparture
     }
+  }
+
+  if (manifest?.trip_date && manifest?.arrival_time) {
+    const parsedArrival = new Date(`${manifest.trip_date}T${manifest.arrival_time}`)
+    if (Number.isFinite(parsedArrival.getTime())) {
+      if (departureDateTime && parsedArrival <= departureDateTime) {
+        return new Date(parsedArrival.getTime() + 24 * 60 * 60 * 1000)
+      }
+      return parsedArrival
+    }
+  }
+
+  if (departureDateTime) {
+    const durationMinutes = Number.isFinite(Number(route?.duration_hours))
+      ? Math.max(1, Math.round(Number(route.duration_hours) * 60))
+      : 8 * 60
+    return new Date(departureDateTime.getTime() + durationMinutes * 60000)
   }
 
   return null
@@ -106,6 +116,11 @@ export async function queueArrivalReminderJobs(manifest, passengers, route, minu
   }
 
   const scheduledDateTime = new Date(arrivalDateTime.getTime() - (minutesBeforeArrival * 60000))
+  const minimumQueueMinutes = Math.max(10, Number.isFinite(Number(minutesBeforeArrival)) ? Number(minutesBeforeArrival) : 30)
+  const minimumQueuedTime = new Date(Date.now() + minimumQueueMinutes * 60000)
+  if (scheduledDateTime <= minimumQueuedTime) {
+    scheduledDateTime.setTime(minimumQueuedTime.getTime())
+  }
 
   const { data: templates, error: templatesError } = await supabase
     .from('sms_templates')
@@ -329,9 +344,17 @@ function generateMessageFromTemplate(template, passenger, manifest, route, rule)
   }
 
   const notificationStage = rule.timing_type === 'before_end' ? 'arrival' : 'departure'
+  const isNextOfKin = rule.recipient_type === 'next_of_kin'
   const stageLabel = notificationStage === 'arrival'
-    ? `Arrival update (${rule.minutes_offset} mins before expected arrival)`
-    : `Departure update`
+    ? (isNextOfKin ? 'Family Arrival Reminder' : 'Arrival Reminder')
+    : (isNextOfKin ? 'Family Departure Update' : 'Departure Update')
+  const stageMessage = notificationStage === 'arrival'
+    ? (isNextOfKin
+      ? `${passenger.full_name} is approximately ${rule.minutes_offset} minutes from arrival at ${route.destination}.`
+      : `You are approximately ${rule.minutes_offset} minutes from arrival at ${route.destination}.`)
+    : (isNextOfKin
+      ? `${passenger.full_name} has departed from ${route.departure_location} to ${route.destination}.`
+      : `Your journey from ${route.departure_location} to ${route.destination} has departed and cover is active.`)
 
   return template
     .replace(/{passenger_name}/g, passenger.full_name)
@@ -344,6 +367,8 @@ function generateMessageFromTemplate(template, passenger, manifest, route, rule)
     .replace(/{arrival_time}/g, manifest.arrival_time || '')
     .replace(/{notification_stage}/g, notificationStage)
     .replace(/{stage_label}/g, stageLabel)
+    .replace(/{stage_message}/g, stageMessage)
+    .replace(/{support_phone}/g, '+234 800 000 0000')
     .replace(/{trip_date}/g, new Date(manifest.trip_date).toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
@@ -353,7 +378,7 @@ function generateMessageFromTemplate(template, passenger, manifest, route, rule)
 }
 
 export async function queueDepartureImmediateJobs(manifest, passengers, route) {
-  const nowIso = new Date().toISOString()
+  const nowIso = new Date(Date.now() - 60 * 1000).toISOString()
 
   const { data: templates, error: templatesError } = await supabase
     .from('sms_templates')

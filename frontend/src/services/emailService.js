@@ -75,8 +75,28 @@ function replacePlaceholders(text, data) {
 /**
  * Render email template with passenger data
  */
-export function renderTemplate(template, passenger, manifestData) {
+export function renderTemplate(template, passenger, manifestData, recipientType = 'passenger') {
+  const notificationStage = manifestData.notification_stage || 'departure'
+  const isNextOfKin = recipientType === 'next_of_kin'
+  const stageLabel = manifestData.stage_label || (
+    notificationStage === 'arrival'
+      ? (isNextOfKin ? 'Family Arrival Reminder' : 'Arrival Reminder')
+      : (isNextOfKin ? 'Family Departure Update' : 'Departure Update')
+  )
+  const stageMessage = manifestData.stage_message || (
+    notificationStage === 'arrival'
+      ? (isNextOfKin
+        ? `${passenger.full_name || 'The passenger'} is approximately 30 minutes from arrival at ${manifestData.destination || 'the destination'}. TravelCover support remains active until trip completion.`
+        : `You are approximately 30 minutes from arrival at ${manifestData.destination || 'your destination'}. Your TravelCover protection remains active until trip completion.`)
+      : (isNextOfKin
+        ? `${passenger.full_name || 'The passenger'} has departed from ${manifestData.departure || 'departure point'} to ${manifestData.destination || 'destination'}. TravelCover protection is active for this trip.`
+        : `Your journey from ${manifestData.departure || 'departure point'} to ${manifestData.destination || 'destination'} has departed and your TravelCover protection is active.`)
+  )
+
   const data = {
+    recipient_name: isNextOfKin
+      ? (passenger.next_of_kin_name || passenger.full_name || 'Next of Kin')
+      : (passenger.full_name || 'Passenger'),
     passenger_name: passenger.full_name,
     next_of_kin_name: passenger.next_of_kin_name,
     company: manifestData.company,
@@ -84,6 +104,9 @@ export function renderTemplate(template, passenger, manifestData) {
     destination: manifestData.destination,
     manifest_reference: manifestData.manifest_reference || 'N/A',
     support_phone: '+234 800 000 0000',
+    notification_stage: notificationStage,
+    stage_label: stageLabel,
+    stage_message: stageMessage,
     trip_date: new Date(manifestData.trip_date).toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
@@ -180,7 +203,7 @@ export async function sendBulkEmails(passengers, manifestData, templateId = null
       if (passenger.email) {
         results.total++
         
-        const rendered = renderTemplate(passengerTemplate, passenger, manifestData)
+        const rendered = renderTemplate(passengerTemplate, passenger, manifestData, 'passenger')
         
         const result = await sendEmail(
           passenger.email,
@@ -216,7 +239,7 @@ export async function sendBulkEmails(passengers, manifestData, templateId = null
       if (passenger.next_of_kin_email) {
         results.total++
         
-        const rendered = renderTemplate(nokTemplate, passenger, manifestData)
+        const rendered = renderTemplate(nokTemplate, passenger, manifestData, 'next_of_kin')
         
         const result = await sendEmail(
           passenger.next_of_kin_email,

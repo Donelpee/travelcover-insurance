@@ -28,7 +28,7 @@ function App() {
 
       isProcessingRef.current = true
       try {
-        await processDueNotifications({ rpcOnly: true })
+        await processDueNotifications()
       } finally {
         isProcessingRef.current = false
       }

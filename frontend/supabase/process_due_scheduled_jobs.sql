@@ -14,6 +14,7 @@ declare
   sms_result jsonb;
   email_result jsonb;
   recipient_email text;
+  recipient_name text;
   passenger_name text;
   next_of_kin_name text;
   manifest_reference text;
@@ -28,6 +29,9 @@ declare
   rendered_body text;
   email_subject text;
   email_body text;
+  notification_stage text;
+  stage_label text;
+  stage_message text;
   processed_count integer := 0;
   sent_count integer := 0;
   failed_count integer := 0;
@@ -106,10 +110,34 @@ begin
         left join public.routes r on r.id = m.route_id
         where p.id = scheduled_record.passenger_id;
 
+        recipient_name := case
+          when scheduled_record.recipient_type = 'next_of_kin' then coalesce(next_of_kin_name, passenger_name, 'Next of Kin')
+          else coalesce(passenger_name, 'Passenger')
+        end;
+
         if recipient_email is not null and btrim(recipient_email) <> '' then
+          notification_stage := case
+            when scheduled_record.message_type = 'arrival_30min' then 'arrival'
+            else 'departure'
+          end;
+
+          stage_label := case
+            when notification_stage = 'arrival' and scheduled_record.recipient_type = 'next_of_kin' then 'Family Arrival Reminder'
+            when notification_stage = 'arrival' then 'Arrival Reminder'
+            when scheduled_record.recipient_type = 'next_of_kin' then 'Family Departure Update'
+            else 'Departure Update'
+          end;
+
+          stage_message := case
+            when notification_stage = 'arrival' and scheduled_record.recipient_type = 'next_of_kin' then coalesce(passenger_name, 'Passenger') || ' is approximately 30 minutes from arrival at ' || coalesce(destination_location, 'the destination') || '. TravelCover support remains active until trip completion.'
+            when notification_stage = 'arrival' then 'You are approximately 30 minutes from arrival at ' || coalesce(destination_location, 'your destination') || '. Your TravelCover protection remains active until trip completion.'
+            when scheduled_record.recipient_type = 'next_of_kin' then coalesce(passenger_name, 'Passenger') || ' has departed from ' || coalesce(departure_location, 'departure point') || ' to ' || coalesce(destination_location, 'destination') || '. TravelCover protection is active for this trip.'
+            else 'Your journey has departed from ' || coalesce(departure_location, 'departure point') || ' to ' || coalesce(destination_location, 'destination') || '. Your TravelCover protection is active.'
+          end;
+
           email_subject := case
-            when scheduled_record.message_type = 'arrival_30min' then 'Journey Arrival Update'
-            else 'Journey Departure Update'
+            when notification_stage = 'arrival' then 'TravelCover Arrival Update'
+            else 'TravelCover Departure Update'
           end;
 
           select et.subject, et.body_html
@@ -139,28 +167,61 @@ begin
           rendered_subject := coalesce(template_subject, email_subject);
           rendered_body := coalesce(
             template_body,
-            '<p>' || coalesce(scheduled_record.message_content, '') || '</p>' ||
-            '<p><strong>Reference:</strong> ' || coalesce(manifest_reference, 'N/A') || '</p>' ||
-            '<p><strong>Support:</strong> ' || support_phone || '</p>'
+            '<!DOCTYPE html>' ||
+            '<html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /></head>' ||
+            '<body style="margin:0;padding:0;background:#f3f7ff;font-family:Inter,Segoe UI,Arial,sans-serif;color:#0f172a;">' ||
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f7ff;padding:24px 12px;"><tr><td align="center">' ||
+            '<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #dbeafe;">' ||
+            '<tr><td style="background:linear-gradient(135deg,#1d4ed8,#0ea5e9);padding:24px 28px;">' ||
+            '<h1 style="margin:0;color:#ffffff;font-size:24px;line-height:1.3;font-weight:700;">TravelCover {stage_label}</h1>' ||
+            '<p style="margin:8px 0 0;color:#e0f2fe;font-size:14px;line-height:1.5;">Reliable protection and timely trip updates for passengers and their families.</p>' ||
+            '</td></tr><tr><td style="padding:28px;">' ||
+            '<p style="margin:0 0 14px;font-size:16px;line-height:1.6;">Hello <strong>{recipient_name}</strong>,</p>' ||
+            '<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#334155;">{stage_message}</p>' ||
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0;border:1px solid #dbeafe;border-radius:12px;overflow:hidden;">' ||
+            '<tr><td style="background:#eff6ff;padding:14px 16px;font-size:14px;font-weight:600;color:#1e3a8a;">Trip Summary</td></tr>' ||
+            '<tr><td style="padding:14px 16px;">' ||
+            '<p style="margin:0 0 8px;font-size:14px;color:#334155;"><strong>Passenger:</strong> {passenger_name}</p>' ||
+            '<p style="margin:0 0 8px;font-size:14px;color:#334155;"><strong>Next of Kin:</strong> {next_of_kin_name}</p>' ||
+            '<p style="margin:0 0 8px;font-size:14px;color:#334155;"><strong>Route:</strong> {departure} to {destination}</p>' ||
+            '<p style="margin:0 0 8px;font-size:14px;color:#334155;"><strong>Travel Date:</strong> {trip_date}</p>' ||
+            '<p style="margin:0;font-size:14px;color:#334155;"><strong>Reference:</strong> {manifest_reference}</p>' ||
+            '</td></tr></table>' ||
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0 0;border-left:4px solid #2563eb;background:#f8fafc;">' ||
+            '<tr><td style="padding:12px 14px;"><p style="margin:0;font-size:14px;color:#1e293b;"><strong>24/7 Support:</strong> {support_phone}</p></td></tr>' ||
+            '</table>' ||
+            '<p style="margin:20px 0 0;font-size:14px;line-height:1.7;color:#475569;">' || coalesce(scheduled_record.message_content, '') || '</p>' ||
+            '<p style="margin:14px 0 0;font-size:14px;color:#0f172a;"><strong>TravelCover Insurance Team</strong></p>' ||
+            '</td></tr><tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 20px;text-align:center;">' ||
+            '<p style="margin:0;font-size:12px;color:#64748b;">© TravelCover Insurance • Journey Protection & Notifications</p>' ||
+            '</td></tr></table></td></tr></table></body></html>'
           );
 
           rendered_subject := replace(rendered_subject, '{passenger_name}', coalesce(passenger_name, 'Passenger'));
           rendered_subject := replace(rendered_subject, '{next_of_kin_name}', coalesce(next_of_kin_name, 'Next of Kin'));
+          rendered_subject := replace(rendered_subject, '{recipient_name}', coalesce(recipient_name, 'Passenger'));
           rendered_subject := replace(rendered_subject, '{company}', coalesce(company_name, 'TravelCover'));
           rendered_subject := replace(rendered_subject, '{departure}', coalesce(departure_location, 'Departure'));
           rendered_subject := replace(rendered_subject, '{destination}', coalesce(destination_location, 'Destination'));
           rendered_subject := replace(rendered_subject, '{trip_date}', coalesce(trip_date_text, ''));
           rendered_subject := replace(rendered_subject, '{manifest_reference}', coalesce(manifest_reference, 'N/A'));
           rendered_subject := replace(rendered_subject, '{support_phone}', support_phone);
+          rendered_subject := replace(rendered_subject, '{notification_stage}', notification_stage);
+          rendered_subject := replace(rendered_subject, '{stage_label}', stage_label);
+          rendered_subject := replace(rendered_subject, '{stage_message}', stage_message);
 
           rendered_body := replace(rendered_body, '{passenger_name}', coalesce(passenger_name, 'Passenger'));
           rendered_body := replace(rendered_body, '{next_of_kin_name}', coalesce(next_of_kin_name, 'Next of Kin'));
+          rendered_body := replace(rendered_body, '{recipient_name}', coalesce(recipient_name, 'Passenger'));
           rendered_body := replace(rendered_body, '{company}', coalesce(company_name, 'TravelCover'));
           rendered_body := replace(rendered_body, '{departure}', coalesce(departure_location, 'Departure'));
           rendered_body := replace(rendered_body, '{destination}', coalesce(destination_location, 'Destination'));
           rendered_body := replace(rendered_body, '{trip_date}', coalesce(trip_date_text, ''));
           rendered_body := replace(rendered_body, '{manifest_reference}', coalesce(manifest_reference, 'N/A'));
           rendered_body := replace(rendered_body, '{support_phone}', support_phone);
+          rendered_body := replace(rendered_body, '{notification_stage}', notification_stage);
+          rendered_body := replace(rendered_body, '{stage_label}', stage_label);
+          rendered_body := replace(rendered_body, '{stage_message}', stage_message);
 
           begin
             select public.send_email_via_resend(
@@ -229,10 +290,34 @@ begin
         left join public.routes r on r.id = m.route_id
         where p.id = scheduled_record.passenger_id;
 
+        recipient_name := case
+          when scheduled_record.recipient_type = 'next_of_kin' then coalesce(next_of_kin_name, passenger_name, 'Next of Kin')
+          else coalesce(passenger_name, 'Passenger')
+        end;
+
         if recipient_email is not null and btrim(recipient_email) <> '' then
+          notification_stage := case
+            when scheduled_record.message_type = 'arrival_30min' then 'arrival'
+            else 'departure'
+          end;
+
+          stage_label := case
+            when notification_stage = 'arrival' and scheduled_record.recipient_type = 'next_of_kin' then 'Family Arrival Reminder'
+            when notification_stage = 'arrival' then 'Arrival Reminder'
+            when scheduled_record.recipient_type = 'next_of_kin' then 'Family Departure Update'
+            else 'Departure Update'
+          end;
+
+          stage_message := case
+            when notification_stage = 'arrival' and scheduled_record.recipient_type = 'next_of_kin' then coalesce(passenger_name, 'Passenger') || ' is approximately 30 minutes from arrival at ' || coalesce(destination_location, 'the destination') || '. TravelCover support remains active until trip completion.'
+            when notification_stage = 'arrival' then 'You are approximately 30 minutes from arrival at ' || coalesce(destination_location, 'your destination') || '. Your TravelCover protection remains active until trip completion.'
+            when scheduled_record.recipient_type = 'next_of_kin' then coalesce(passenger_name, 'Passenger') || ' has departed from ' || coalesce(departure_location, 'departure point') || ' to ' || coalesce(destination_location, 'destination') || '. TravelCover protection is active for this trip.'
+            else 'Your journey has departed from ' || coalesce(departure_location, 'departure point') || ' to ' || coalesce(destination_location, 'destination') || '. Your TravelCover protection is active.'
+          end;
+
           email_subject := case
-            when scheduled_record.message_type = 'arrival_30min' then 'Journey Arrival Update'
-            else 'Journey Departure Update'
+            when notification_stage = 'arrival' then 'TravelCover Arrival Update'
+            else 'TravelCover Departure Update'
           end;
 
           select et.subject, et.body_html
@@ -262,28 +347,61 @@ begin
           rendered_subject := coalesce(template_subject, email_subject);
           rendered_body := coalesce(
             template_body,
-            '<p>' || coalesce(scheduled_record.message_content, '') || '</p>' ||
-            '<p><strong>Reference:</strong> ' || coalesce(manifest_reference, 'N/A') || '</p>' ||
-            '<p><strong>Support:</strong> ' || support_phone || '</p>'
+            '<!DOCTYPE html>' ||
+            '<html><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /></head>' ||
+            '<body style="margin:0;padding:0;background:#f3f7ff;font-family:Inter,Segoe UI,Arial,sans-serif;color:#0f172a;">' ||
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f7ff;padding:24px 12px;"><tr><td align="center">' ||
+            '<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #dbeafe;">' ||
+            '<tr><td style="background:linear-gradient(135deg,#1d4ed8,#0ea5e9);padding:24px 28px;">' ||
+            '<h1 style="margin:0;color:#ffffff;font-size:24px;line-height:1.3;font-weight:700;">TravelCover {stage_label}</h1>' ||
+            '<p style="margin:8px 0 0;color:#e0f2fe;font-size:14px;line-height:1.5;">Reliable protection and timely trip updates for passengers and their families.</p>' ||
+            '</td></tr><tr><td style="padding:28px;">' ||
+            '<p style="margin:0 0 14px;font-size:16px;line-height:1.6;">Hello <strong>{recipient_name}</strong>,</p>' ||
+            '<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#334155;">{stage_message}</p>' ||
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0;border:1px solid #dbeafe;border-radius:12px;overflow:hidden;">' ||
+            '<tr><td style="background:#eff6ff;padding:14px 16px;font-size:14px;font-weight:600;color:#1e3a8a;">Trip Summary</td></tr>' ||
+            '<tr><td style="padding:14px 16px;">' ||
+            '<p style="margin:0 0 8px;font-size:14px;color:#334155;"><strong>Passenger:</strong> {passenger_name}</p>' ||
+            '<p style="margin:0 0 8px;font-size:14px;color:#334155;"><strong>Next of Kin:</strong> {next_of_kin_name}</p>' ||
+            '<p style="margin:0 0 8px;font-size:14px;color:#334155;"><strong>Route:</strong> {departure} to {destination}</p>' ||
+            '<p style="margin:0 0 8px;font-size:14px;color:#334155;"><strong>Travel Date:</strong> {trip_date}</p>' ||
+            '<p style="margin:0;font-size:14px;color:#334155;"><strong>Reference:</strong> {manifest_reference}</p>' ||
+            '</td></tr></table>' ||
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0 0;border-left:4px solid #2563eb;background:#f8fafc;">' ||
+            '<tr><td style="padding:12px 14px;"><p style="margin:0;font-size:14px;color:#1e293b;"><strong>24/7 Support:</strong> {support_phone}</p></td></tr>' ||
+            '</table>' ||
+            '<p style="margin:20px 0 0;font-size:14px;line-height:1.7;color:#475569;">' || coalesce(scheduled_record.message_content, '') || '</p>' ||
+            '<p style="margin:14px 0 0;font-size:14px;color:#0f172a;"><strong>TravelCover Insurance Team</strong></p>' ||
+            '</td></tr><tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 20px;text-align:center;">' ||
+            '<p style="margin:0;font-size:12px;color:#64748b;">© TravelCover Insurance • Journey Protection & Notifications</p>' ||
+            '</td></tr></table></td></tr></table></body></html>'
           );
 
           rendered_subject := replace(rendered_subject, '{passenger_name}', coalesce(passenger_name, 'Passenger'));
           rendered_subject := replace(rendered_subject, '{next_of_kin_name}', coalesce(next_of_kin_name, 'Next of Kin'));
+          rendered_subject := replace(rendered_subject, '{recipient_name}', coalesce(recipient_name, 'Passenger'));
           rendered_subject := replace(rendered_subject, '{company}', coalesce(company_name, 'TravelCover'));
           rendered_subject := replace(rendered_subject, '{departure}', coalesce(departure_location, 'Departure'));
           rendered_subject := replace(rendered_subject, '{destination}', coalesce(destination_location, 'Destination'));
           rendered_subject := replace(rendered_subject, '{trip_date}', coalesce(trip_date_text, ''));
           rendered_subject := replace(rendered_subject, '{manifest_reference}', coalesce(manifest_reference, 'N/A'));
           rendered_subject := replace(rendered_subject, '{support_phone}', support_phone);
+          rendered_subject := replace(rendered_subject, '{notification_stage}', notification_stage);
+          rendered_subject := replace(rendered_subject, '{stage_label}', stage_label);
+          rendered_subject := replace(rendered_subject, '{stage_message}', stage_message);
 
           rendered_body := replace(rendered_body, '{passenger_name}', coalesce(passenger_name, 'Passenger'));
           rendered_body := replace(rendered_body, '{next_of_kin_name}', coalesce(next_of_kin_name, 'Next of Kin'));
+          rendered_body := replace(rendered_body, '{recipient_name}', coalesce(recipient_name, 'Passenger'));
           rendered_body := replace(rendered_body, '{company}', coalesce(company_name, 'TravelCover'));
           rendered_body := replace(rendered_body, '{departure}', coalesce(departure_location, 'Departure'));
           rendered_body := replace(rendered_body, '{destination}', coalesce(destination_location, 'Destination'));
           rendered_body := replace(rendered_body, '{trip_date}', coalesce(trip_date_text, ''));
           rendered_body := replace(rendered_body, '{manifest_reference}', coalesce(manifest_reference, 'N/A'));
           rendered_body := replace(rendered_body, '{support_phone}', support_phone);
+          rendered_body := replace(rendered_body, '{notification_stage}', notification_stage);
+          rendered_body := replace(rendered_body, '{stage_label}', stage_label);
+          rendered_body := replace(rendered_body, '{stage_message}', stage_message);
 
           begin
             select public.send_email_via_resend(

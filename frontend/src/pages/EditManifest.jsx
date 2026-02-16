@@ -411,7 +411,20 @@ export default function EditManifest() {
         route: selectedRoute
       })
 
-      const processedResult = await processDueNotifications({ rpcOnly: true })
+      let processedResult = await processDueNotifications()
+
+      if (
+        (departureQueueResult?.count || 0) > 0
+        && (processedResult?.sent || 0) === 0
+        && (processedResult?.failed || 0) === 0
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+        const retryResult = await processDueNotifications()
+
+        if ((retryResult?.processed || 0) > 0 || (retryResult?.sent || 0) > 0 || (retryResult?.failed || 0) > 0) {
+          processedResult = retryResult
+        }
+      }
 
       if (!processedResult?.success) {
         warning('Immediate send encountered an issue', processedResult?.error || 'Unable to process departure notifications')
