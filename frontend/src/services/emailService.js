@@ -157,9 +157,9 @@ export async function sendBulkEmails(passengers, manifestData, templateId = null
 
       if (selectedTemplate.template_type === 'passenger') {
         passengerTemplate = selectedTemplate
-        nokTemplate = await getTemplateByType('next_of_kin')
+        nokTemplate = await getTemplateByTypeOrGeneral('next_of_kin')
       } else if (selectedTemplate.template_type === 'next_of_kin') {
-        passengerTemplate = await getTemplateByType('passenger')
+        passengerTemplate = await getTemplateByTypeOrGeneral('passenger')
         nokTemplate = selectedTemplate
       } else {
         passengerTemplate = selectedTemplate
@@ -167,25 +167,12 @@ export async function sendBulkEmails(passengers, manifestData, templateId = null
       }
     } else {
       // Use default templates by type
-      passengerTemplate = await getTemplateByType('passenger')
-      nokTemplate = await getTemplateByType('next_of_kin')
+      passengerTemplate = await getTemplateByTypeOrGeneral('passenger')
+      nokTemplate = await getTemplateByTypeOrGeneral('next_of_kin')
     }
 
-    // Fallback to hardcoded if no templates found
-    if (!passengerTemplate) {
-      console.warn('No passenger template found, using fallback')
-      passengerTemplate = {
-        subject: 'Trip Cover Active: {departure} → {destination}',
-        body_html: generateFallbackPassengerEmail()
-      }
-    }
-
-    if (!nokTemplate) {
-      console.warn('No next of kin template found, using fallback')
-      nokTemplate = {
-        subject: 'Journey Update for {passenger_name}',
-        body_html: generateFallbackNextOfKinEmail()
-      }
+    if (!passengerTemplate || !nokTemplate) {
+      throw new Error('Missing active email templates in Admin Settings (passenger/next_of_kin/general)')
     }
 
     for (const passenger of passengers) {
@@ -384,4 +371,10 @@ function generateFallbackNextOfKinEmail() {
 </body>
 </html>
   `
+}
+
+async function getTemplateByTypeOrGeneral(templateType) {
+  const exact = await getTemplateByType(templateType)
+  if (exact) return exact
+  return getTemplateByType('general')
 }

@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { Plus, Trash2, Save, Users } from 'lucide-react'
 import { success, error, warning, confirm as confirmToast } from '../utils/notifications'
-import { enqueueManifestRuleNotifications } from '../services/notificationService'
+import { sendImmediateNotifications, scheduleManifestNotifications } from '../services/notificationService'
 
 export default function EditManifest() {
   const navigate = useNavigate()
@@ -22,6 +22,10 @@ export default function EditManifest() {
   })
   const [saving, setSaving] = useState(false)
   const [bulkAddCount, setBulkAddCount] = useState('5')
+  const [sendOption, setSendOption] = useState('immediate')
+  const [sendEmails, setSendEmails] = useState(true)
+  const [scheduledDate, setScheduledDate] = useState('')
+  const [scheduledTime, setScheduledTime] = useState('')
 
   useEffect(() => {
     fetchCompanies()
@@ -189,6 +193,19 @@ export default function EditManifest() {
 
     if (hasError) return
 
+    if (sendOption === 'scheduled') {
+      if (!scheduledDate || !scheduledTime) {
+        error('Missing schedule details', 'Select scheduled date and time')
+        return
+      }
+
+      const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`)
+      if (!Number.isFinite(scheduledDateTime.getTime()) || scheduledDateTime <= new Date()) {
+        error('Invalid schedule time', 'Scheduled time must be in the future')
+        return
+      }
+    }
+
     setSaving(true)
 
     try {
@@ -254,30 +271,65 @@ export default function EditManifest() {
       }
 
       console.log('✅ Passengers saved:', insertedPassengers.length)
-      console.log('=== SCHEDULING JOBS ===')
 
       const selectedCompany = companies.find(c => c.id === manifestData.company_id)
-      const { schedulingResult } = await enqueueManifestRuleNotifications({
-        manifest: {
-          ...manifest,
-          company_id: manifestData.company_id,
-          route_id: manifestData.route_id,
-          company_name: selectedCompany?.company_name
-        },
-        passengers: insertedPassengers,
-        route: selectedRoute,
-        company: selectedCompany
-      })
-
-      if ((schedulingResult?.count || 0) === 0) {
-        warning('Manifest saved, but no scheduled jobs were generated', 'Open Journey Automation and verify active rules for this company/route')
+      const manifestForNotification = {
+        ...manifest,
+        company_id: manifestData.company_id,
+        route_id: manifestData.route_id,
+        company_name: selectedCompany?.company_name
       }
+
+      if (sendOption === 'scheduled') {
+        const { schedulingResult } = await scheduleManifestNotifications({
+          manifest: manifestForNotification,
+          route: selectedRoute,
+          company: selectedCompany,
+          passengers: insertedPassengers,
+          scheduledDate,
+          scheduledTime
+        })
+
+        if ((schedulingResult?.count || 0) === 0) {
+          warning('Manifest saved, but no scheduled jobs were generated', 'Open Journey Automation and verify active rules for this company/route')
+        } else {
+          success('Manifest saved and notifications scheduled', `Queued ${schedulingResult.count} message(s) from admin templates`) 
+        }
+
+        setSaving(false)
+        navigate('/scheduled-messages')
+        return
+      }
+
+      const manifestDataForTemplates = {
+        company: selectedCompany?.company_name || 'TravelCover',
+        departure: selectedRoute?.departure_location || 'Departure',
+        destination: selectedRoute?.destination || 'Destination',
+        trip_date: manifest.trip_date,
+        manifest_reference: manifest.manifest_reference || 'N/A'
+      }
+
+      const { smsResults, emailResults } = await sendImmediateNotifications({
+        passengers: insertedPassengers,
+        company: selectedCompany,
+        route: selectedRoute,
+        manifest: manifestDataForTemplates,
+        sendEmails,
+        selectedTemplateId: null
+      })
 
       console.log('✅ All done!')
 
-      success('Manifest saved successfully!', `${passengers.length} passenger${passengers.length === 1 ? '' : 's'} recorded`)
-      
-      navigate('/send-sms', { state: { manifestId: manifest.id } })
+      const smsSummary = `SMS ${smsResults?.sent || 0}/${smsResults?.total || 0}`
+      const emailSummary = sendEmails && emailResults ? ` | Email ${emailResults.sent}/${emailResults.total}` : ''
+      success('Manifest saved and notifications processed', smsSummary + emailSummary)
+
+      if (smsResults?.failed === smsResults?.total) {
+        const firstFailure = smsResults.details?.find(detail => detail.status === 'failed')
+        warning('SMS not delivered', firstFailure?.error || 'Please verify SMS provider settings')
+      }
+
+      navigate('/')
 
     } catch (err) {
       console.error('❌ SAVE MANIFEST ERROR:', err)
@@ -356,6 +408,71 @@ export default function EditManifest() {
               className="w-full px-3 py-2 border rounded-lg"
             />
           </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
+        <h3 className="text-xl font-semibold mb-4">Notification Dispatch</h3>
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="radio"
+                value="immediate"
+                checked={sendOption === 'immediate'}
+                onChange={(e) => setSendOption(e.target.value)}
+                className="w-4 h-4"
+              />
+              <span className="text-sm font-medium">Send Immediately</span>
+            </label>
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="radio"
+                value="scheduled"
+                checked={sendOption === 'scheduled'}
+                onChange={(e) => setSendOption(e.target.value)}
+                className="w-4 h-4"
+              />
+              <span className="text-sm font-medium">Schedule</span>
+            </label>
+          </div>
+
+          {sendOption === 'scheduled' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Scheduled Date</label>
+                <input
+                  type="date"
+                  value={scheduledDate}
+                  onChange={(e) => setScheduledDate(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Scheduled Time</label>
+                <input
+                  type="time"
+                  value={scheduledTime}
+                  onChange={(e) => setScheduledTime(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg"
+                />
+              </div>
+            </div>
+          )}
+
+          <label className="flex items-center space-x-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={sendEmails}
+              onChange={(e) => setSendEmails(e.target.checked)}
+              className="w-4 h-4"
+            />
+            <span className="text-sm">Also send emails</span>
+          </label>
+
+          <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+            Message content comes from Admin-managed SMS and Email templates only.
+          </p>
         </div>
       </div>
 
@@ -542,7 +659,7 @@ export default function EditManifest() {
           className="flex-1 bg-gradient-to-r from-green-600 to-green-700 text-white py-3.5 rounded-lg hover:from-green-700 hover:to-green-800 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-lg transition-all"
         >
           <Save size={20} />
-          <span>{saving ? 'Saving...' : 'Save and Continue'}</span>
+          <span>{saving ? 'Processing...' : sendOption === 'scheduled' ? 'Save and Schedule Notifications' : 'Save and Send Notifications'}</span>
         </button>
       </div>
     </div>
