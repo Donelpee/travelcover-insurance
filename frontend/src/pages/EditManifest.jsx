@@ -9,6 +9,7 @@ import {
   queueImmediateDepartureNotifications,
   scheduleManifestNotifications
 } from '../services/notificationService'
+import { parseLagosDateTime, formatTimeInLagos } from '../utils/lagosTime'
 
 export default function EditManifest() {
   const navigate = useNavigate()
@@ -301,7 +302,10 @@ export default function EditManifest() {
       console.log('=== SAVING MANIFEST ===')
       console.log('Manifest Data:', manifestData)
 
-      const departureDateTime = new Date(`${manifestData.trip_date}T${manifestData.departure_time || '00:00'}`)
+      const departureDateTime = parseLagosDateTime(manifestData.trip_date, manifestData.departure_time || '00:00')
+      if (!departureDateTime) {
+        throw new Error('Invalid trip date or departure time')
+      }
       const selectedRoute = routes.find(r => r.id === manifestData.route_id)
       const durationMinutesFromRoute = Number.isFinite(Number(selectedRoute?.duration_hours))
         ? Math.max(1, Math.round(Number(selectedRoute.duration_hours) * 60))
@@ -312,7 +316,7 @@ export default function EditManifest() {
         || durationMinutesFromRoute
 
       const arrivalDateTime = new Date(departureDateTime.getTime() + (durationMinutesToUse * 60000))
-      const arrivalTimeString = arrivalDateTime.toTimeString().slice(0, 5)
+      const arrivalTimeString = formatTimeInLagos(arrivalDateTime)
 
       const { data: manifest, error: manifestError } = await supabase
         .from('manifests')

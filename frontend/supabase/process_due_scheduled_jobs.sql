@@ -3,6 +3,22 @@
 
 create extension if not exists pg_cron;
 
+do $$
+begin
+  begin
+    alter table public.scheduled_jobs
+      drop constraint if exists scheduled_jobs_status_check;
+
+    alter table public.scheduled_jobs
+      add constraint scheduled_jobs_status_check
+      check (status in ('pending', 'sent', 'failed', 'cancelled'));
+  exception
+    when others then
+      null;
+  end;
+end;
+$$;
+
 create or replace function public.process_due_scheduled_jobs()
 returns jsonb
 language plpgsql
@@ -91,11 +107,11 @@ begin
         limit 1;
 
         if manifest_trip_date is not null and manifest_departure_time is not null then
-          departure_ts := (manifest_trip_date::text || ' ' || manifest_departure_time::text)::timestamptz;
+          departure_ts := ((manifest_trip_date::text || ' ' || manifest_departure_time::text)::timestamp at time zone 'Africa/Lagos');
         end if;
 
         if manifest_trip_date is not null and manifest_arrival_time is not null then
-          arrival_ts := (manifest_trip_date::text || ' ' || manifest_arrival_time::text)::timestamptz;
+          arrival_ts := ((manifest_trip_date::text || ' ' || manifest_arrival_time::text)::timestamp at time zone 'Africa/Lagos');
 
           if departure_ts is not null and arrival_ts <= departure_ts then
             arrival_ts := arrival_ts + interval '1 day';

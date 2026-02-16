@@ -1,12 +1,19 @@
 import { supabase } from './supabase'
 import { sendTermiiSMS } from './termiiService'
+import { parseLagosDateTime } from '../utils/lagosTime'
 
 /**
  * Calculate scheduled SMS times based on route duration and trip date/time
  */
 export function calculateScheduledTimes(tripDate, departureTime, durationHours) {
-  // Combine trip date and departure time
-  const tripDateTime = new Date(`${tripDate}T${departureTime}`)
+  const tripDateTime = parseLagosDateTime(tripDate, departureTime)
+  if (!tripDateTime) {
+    return {
+      tripStart: new Date(),
+      tripEnd: new Date(),
+      durationHours
+    }
+  }
   
   // Calculate trip end time
   const endDateTime = new Date(tripDateTime.getTime() + (durationHours * 60 * 60 * 1000))
@@ -101,14 +108,14 @@ function getManifestArrivalDateTime(manifest, route) {
   let departureDateTime = null
 
   if (manifest?.trip_date && manifest?.departure_time) {
-    const parsedDeparture = new Date(`${manifest.trip_date}T${manifest.departure_time}`)
+    const parsedDeparture = parseLagosDateTime(manifest.trip_date, manifest.departure_time)
     if (Number.isFinite(parsedDeparture.getTime())) {
       departureDateTime = parsedDeparture
     }
   }
 
   if (manifest?.trip_date && manifest?.arrival_time) {
-    const parsedArrival = new Date(`${manifest.trip_date}T${manifest.arrival_time}`)
+    const parsedArrival = parseLagosDateTime(manifest.trip_date, manifest.arrival_time)
     if (Number.isFinite(parsedArrival.getTime())) {
       if (departureDateTime && parsedArrival <= departureDateTime) {
         return new Date(parsedArrival.getTime() + 24 * 60 * 60 * 1000)
@@ -374,11 +381,15 @@ function generateMessageFromTemplate(template, passenger, manifest, route, rule)
     : (isNextOfKin ? 'Family Departure Update' : 'Departure Update')
   const stageMessage = notificationStage === 'arrival'
     ? (isNextOfKin
-      ? `${passenger.full_name} is approximately ${rule.minutes_offset} minutes from arrival at ${route.destination}.`
-      : `You are approximately ${rule.minutes_offset} minutes from arrival at ${route.destination}.`)
+      ? `Hello ${passenger.next_of_kin_name || 'Next of Kin'}, ${passenger.full_name} is approximately ${rule.minutes_offset} minutes from arrival at ${route.destination}.`
+      : `Hello ${passenger.full_name}, you are approximately ${rule.minutes_offset} minutes from arrival at ${route.destination}.`)
     : (isNextOfKin
-      ? `${passenger.full_name} has departed from ${route.departure_location} to ${route.destination}.`
-      : `Your journey from ${route.departure_location} to ${route.destination} has departed and cover is active.`)
+      ? `Hello ${passenger.next_of_kin_name || 'Next of Kin'}, ${passenger.full_name} has departed from ${route.departure_location} to ${route.destination}.`
+      : `Hello ${passenger.full_name}, your journey from ${route.departure_location} to ${route.destination} has departed and cover is active.`)
+
+  const recipientName = isNextOfKin
+    ? (passenger.next_of_kin_name || passenger.full_name || 'Next of Kin')
+    : (passenger.full_name || 'Passenger')
 
   return template
     .replace(/{passenger_name}/g, passenger.full_name)
@@ -392,6 +403,7 @@ function generateMessageFromTemplate(template, passenger, manifest, route, rule)
     .replace(/{notification_stage}/g, notificationStage)
     .replace(/{stage_label}/g, stageLabel)
     .replace(/{stage_message}/g, stageMessage)
+    .replace(/{recipient_name}/g, recipientName)
     .replace(/{support_phone}/g, '+234 800 000 0000')
     .replace(/{trip_date}/g, new Date(manifest.trip_date).toLocaleDateString('en-US', {
       weekday: 'long',

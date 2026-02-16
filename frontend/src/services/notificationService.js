@@ -9,6 +9,7 @@ import {
   processDueScheduledJobsViaRpc
 } from './smsScheduler'
 import { getTripDurationMs } from '../utils/tripTiming'
+import { parseLagosDateTime, formatTimeInLagos } from '../utils/lagosTime'
 
 function toSchedulableManifest(manifest, company) {
   return {
@@ -53,10 +54,13 @@ export async function scheduleManifestNotifications({
   scheduledDate,
   scheduledTime
 }) {
-  const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`)
+  const scheduledDateTime = parseLagosDateTime(scheduledDate, scheduledTime)
+  if (!scheduledDateTime) {
+    throw new Error('Invalid scheduled date/time')
+  }
   const durationMs = getTripDurationMs(manifest, route)
   const recalculatedArrivalDateTime = new Date(scheduledDateTime.getTime() + durationMs)
-  const recalculatedArrivalTime = recalculatedArrivalDateTime.toTimeString().slice(0, 5)
+  const recalculatedArrivalTime = formatTimeInLagos(recalculatedArrivalDateTime)
 
   const { error: manifestUpdateError } = await supabase
     .from('manifests')
