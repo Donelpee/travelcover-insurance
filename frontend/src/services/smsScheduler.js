@@ -62,6 +62,122 @@ function buildDefaultScheduledMessage(passenger, manifest, route, rule) {
   return `Hello ${passenger.full_name}, your ${journeyLabel} trip with ${companyLabel} (${tripDate}) is active and insured. Checkpoint: ${referenceTimeLabel}. Ref: ${ref}. Support: +2348000000000.`
 }
 
+function resolveSmsTemplateForRecipient(templates, recipientType) {
+  const exact = templates.find((template) => template.template_type === recipientType)
+  if (exact?.message_content) return exact
+
+  const general = templates.find((template) => template.template_type === 'general')
+  if (general?.message_content) return general
+
+  return null
+}
+
+function getManifestArrivalDateTime(manifest, route) {
+  if (manifest?.trip_date && manifest?.arrival_time) {
+    const parsedArrival = new Date(`${manifest.trip_date}T${manifest.arrival_time}`)
+    if (Number.isFinite(parsedArrival.getTime())) {
+      return parsedArrival
+    }
+  }
+
+  if (manifest?.trip_date && manifest?.departure_time) {
+    const parsedDeparture = new Date(`${manifest.trip_date}T${manifest.departure_time}`)
+    if (Number.isFinite(parsedDeparture.getTime())) {
+      const durationMinutes = Number.isFinite(Number(route?.duration_hours))
+        ? Math.max(1, Math.round(Number(route.duration_hours) * 60))
+        : 8 * 60
+      return new Date(parsedDeparture.getTime() + durationMinutes * 60000)
+    }
+  }
+
+  return null
+}
+
+export async function queueArrivalReminderJobs(manifest, passengers, route, minutesBeforeArrival = 30) {
+  const arrivalDateTime = getManifestArrivalDateTime(manifest, route)
+  if (!arrivalDateTime) {
+    throw new Error('Unable to compute trip arrival time for arrival reminders')
+  }
+
+  const scheduledDateTime = new Date(arrivalDateTime.getTime() - (minutesBeforeArrival * 60000))
+
+  const { data: templates, error: templatesError } = await supabase
+    .from('sms_templates')
+    .select('id, template_type, message_content, is_active, updated_at, created_at')
+    .eq('is_active', true)
+    .order('updated_at', { ascending: false })
+
+  if (templatesError) {
+    throw templatesError
+  }
+
+  const rulePassenger = {
+    recipient_type: 'passenger',
+    timing_type: 'before_end',
+    minutes_offset: minutesBeforeArrival
+  }
+
+  const ruleNextOfKin = {
+    recipient_type: 'next_of_kin',
+    timing_type: 'before_end',
+    minutes_offset: minutesBeforeArrival
+  }
+
+  const jobs = []
+
+  for (const passenger of passengers) {
+    if (passenger.phone_number) {
+      const template = resolveSmsTemplateForRecipient(templates || [], 'passenger')
+      jobs.push({
+        manifest_id: manifest.id,
+        passenger_id: passenger.id,
+        message_type: 'arrival_30min',
+        recipient_type: 'passenger',
+        phone_number: passenger.phone_number,
+        message_content: generateMessageFromTemplate(template?.message_content || null, passenger, manifest, route, rulePassenger),
+        scheduled_time: scheduledDateTime.toISOString(),
+        status: 'pending'
+      })
+    }
+
+    if (passenger.next_of_kin_phone) {
+      const template = resolveSmsTemplateForRecipient(templates || [], 'next_of_kin')
+      jobs.push({
+        manifest_id: manifest.id,
+        passenger_id: passenger.id,
+        message_type: 'arrival_30min',
+        recipient_type: 'next_of_kin',
+        phone_number: passenger.next_of_kin_phone,
+        message_content: generateMessageFromTemplate(template?.message_content || null, passenger, manifest, route, ruleNextOfKin),
+        scheduled_time: scheduledDateTime.toISOString(),
+        status: 'pending'
+      })
+    }
+  }
+
+  if (jobs.length === 0) {
+    return {
+      success: true,
+      count: 0,
+      scheduled_time: scheduledDateTime.toISOString()
+    }
+  }
+
+  const { error: insertError } = await supabase
+    .from('scheduled_jobs')
+    .insert(jobs)
+
+  if (insertError) {
+    throw insertError
+  }
+
+  return {
+    success: true,
+    count: jobs.length,
+    scheduled_time: scheduledDateTime.toISOString()
+  }
+}
+
 /**
  * Create scheduled SMS for a manifest
  */

@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { Plus, Trash2, Save, Users } from 'lucide-react'
 import { success, error, warning, confirm as confirmToast } from '../utils/notifications'
-import { sendImmediateNotifications, scheduleManifestNotifications } from '../services/notificationService'
+import { queueImmediateArrivalReminders, sendImmediateNotifications, scheduleManifestNotifications } from '../services/notificationService'
 
 export default function EditManifest() {
   const navigate = useNavigate()
@@ -406,11 +406,25 @@ export default function EditManifest() {
         selectedTemplateId: null
       })
 
+      let arrivalQueueResult = { count: 0 }
+      try {
+        arrivalQueueResult = await queueImmediateArrivalReminders({
+          manifest: manifestForNotification,
+          passengers: insertedPassengers,
+          route: selectedRoute,
+          minutesBeforeArrival: 30
+        })
+      } catch (queueErr) {
+        console.error('Error queueing arrival reminders:', queueErr)
+        warning('Arrival reminders not queued', queueErr.message || 'Please check schedule rules and try again')
+      }
+
       console.log('✅ All done!')
 
       const smsSummary = `SMS ${smsResults?.sent || 0}/${smsResults?.total || 0}`
       const emailSummary = emailResults ? ` | Email ${emailResults.sent}/${emailResults.total}` : ''
-      success('Manifest saved and notifications processed', smsSummary + emailSummary)
+      const queueSummary = arrivalQueueResult?.count ? ` | Arrival reminders queued: ${arrivalQueueResult.count}` : ''
+      success('Manifest saved and notifications processed', smsSummary + emailSummary + queueSummary)
 
       if (smsResults?.failed === smsResults?.total) {
         const firstFailure = smsResults.details?.find(detail => detail.status === 'failed')
