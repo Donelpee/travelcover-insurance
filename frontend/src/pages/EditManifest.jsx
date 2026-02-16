@@ -18,14 +18,44 @@ export default function EditManifest() {
     route_id: '',
     trip_date: '',
     departure_time: '',
+    arrival_time: '',
     image_url: location.state?.imageUrl || ''
   })
   const [saving, setSaving] = useState(false)
   const [bulkAddCount, setBulkAddCount] = useState('5')
   const [sendOption, setSendOption] = useState('immediate')
-  const [sendEmails, setSendEmails] = useState(true)
+  const [tripDurationMinutes, setTripDurationMinutes] = useState(480)
   const [scheduledDate, setScheduledDate] = useState('')
   const [scheduledTime, setScheduledTime] = useState('')
+
+  function parseTimeToMinutes(timeValue) {
+    if (!timeValue || !timeValue.includes(':')) return null
+    const [hours, minutes] = timeValue.split(':').map(Number)
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null
+    return (hours * 60) + minutes
+  }
+
+  function formatMinutesAsTime(totalMinutes) {
+    const normalized = ((totalMinutes % 1440) + 1440) % 1440
+    const hours = Math.floor(normalized / 60)
+    const minutes = normalized % 60
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+  }
+
+  function calculateDurationMinutes(departureTime, arrivalTime) {
+    const departureMinutes = parseTimeToMinutes(departureTime)
+    const arrivalMinutes = parseTimeToMinutes(arrivalTime)
+    if (departureMinutes === null || arrivalMinutes === null) return null
+    let diff = arrivalMinutes - departureMinutes
+    if (diff <= 0) diff += 1440
+    return diff
+  }
+
+  function addMinutesToTime(timeValue, minutesToAdd) {
+    const currentMinutes = parseTimeToMinutes(timeValue)
+    if (currentMinutes === null || !Number.isFinite(minutesToAdd)) return ''
+    return formatMinutesAsTime(currentMinutes + minutesToAdd)
+  }
 
   useEffect(() => {
     fetchCompanies()
@@ -78,15 +108,67 @@ export default function EditManifest() {
   useEffect(() => {
     if (manifestData.route_id && routes.length > 0) {
       const selectedRoute = routes.find(r => r.id === manifestData.route_id)
-      
-      if (selectedRoute?.typical_departure_time) {
-        setManifestData(prev => ({
+
+      if (!selectedRoute) return
+
+      const defaultDurationMinutes = Number.isFinite(Number(selectedRoute.duration_hours))
+        ? Math.max(1, Math.round(Number(selectedRoute.duration_hours) * 60))
+        : 480
+
+      setManifestData((prev) => {
+        const nextDeparture = prev.departure_time || selectedRoute.typical_departure_time || ''
+        const nextArrival = prev.arrival_time || (nextDeparture ? addMinutesToTime(nextDeparture, defaultDurationMinutes) : '')
+
+        return {
           ...prev,
-          departure_time: selectedRoute.typical_departure_time
-        }))
-      }
+          departure_time: nextDeparture,
+          arrival_time: nextArrival
+        }
+      })
+
+      setTripDurationMinutes((prevDuration) => {
+        if (manifestData.departure_time && manifestData.arrival_time) {
+          return calculateDurationMinutes(manifestData.departure_time, manifestData.arrival_time) || prevDuration
+        }
+        return defaultDurationMinutes
+      })
     }
   }, [manifestData.route_id, routes])
+
+  function handleDepartureTimeChange(value) {
+    setManifestData((prev) => {
+      let nextArrival = prev.arrival_time
+
+      if (Number.isFinite(tripDurationMinutes)) {
+        const computedArrival = addMinutesToTime(value, tripDurationMinutes)
+        if (computedArrival) {
+          nextArrival = computedArrival
+        }
+      }
+
+      return {
+        ...prev,
+        departure_time: value,
+        arrival_time: nextArrival
+      }
+    })
+  }
+
+  function handleArrivalTimeChange(value) {
+    setManifestData((prev) => {
+      const updated = {
+        ...prev,
+        arrival_time: value
+      }
+
+      const computedDuration = calculateDurationMinutes(updated.departure_time, value)
+      if (computedDuration) {
+        setTripDurationMinutes(computedDuration)
+      }
+
+      return updated
+    })
+  }
 
   function addPassenger() {
     setPassengers([
@@ -216,9 +298,15 @@ export default function EditManifest() {
 
       const departureDateTime = new Date(`${manifestData.trip_date}T${manifestData.departure_time || '00:00'}`)
       const selectedRoute = routes.find(r => r.id === manifestData.route_id)
-      const durationHours = selectedRoute?.duration_hours || 8
+      const durationMinutesFromRoute = Number.isFinite(Number(selectedRoute?.duration_hours))
+        ? Math.max(1, Math.round(Number(selectedRoute.duration_hours) * 60))
+        : 480
 
-      const arrivalDateTime = new Date(departureDateTime.getTime() + durationHours * 3600000)
+      const durationMinutesToUse = calculateDurationMinutes(manifestData.departure_time, manifestData.arrival_time)
+        || tripDurationMinutes
+        || durationMinutesFromRoute
+
+      const arrivalDateTime = new Date(departureDateTime.getTime() + (durationMinutesToUse * 60000))
       const arrivalTimeString = arrivalDateTime.toTimeString().slice(0, 5)
 
       const { data: manifest, error: manifestError } = await supabase
@@ -314,14 +402,14 @@ export default function EditManifest() {
         company: selectedCompany,
         route: selectedRoute,
         manifest: manifestDataForTemplates,
-        sendEmails,
+        sendEmails: true,
         selectedTemplateId: null
       })
 
       console.log('✅ All done!')
 
       const smsSummary = `SMS ${smsResults?.sent || 0}/${smsResults?.total || 0}`
-      const emailSummary = sendEmails && emailResults ? ` | Email ${emailResults.sent}/${emailResults.total}` : ''
+      const emailSummary = emailResults ? ` | Email ${emailResults.sent}/${emailResults.total}` : ''
       success('Manifest saved and notifications processed', smsSummary + emailSummary)
 
       if (smsResults?.failed === smsResults?.total) {
@@ -404,7 +492,17 @@ export default function EditManifest() {
             <input
               type="time"
               value={manifestData.departure_time}
-              onChange={(e) => setManifestData({ ...manifestData, departure_time: e.target.value })}
+              onChange={(e) => handleDepartureTimeChange(e.target.value)}
+              className="w-full px-3 py-2 border rounded-lg"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Arrival Time</label>
+            <input
+              type="time"
+              value={manifestData.arrival_time}
+              onChange={(e) => handleArrivalTimeChange(e.target.value)}
               className="w-full px-3 py-2 border rounded-lg"
             />
           </div>
@@ -460,18 +558,8 @@ export default function EditManifest() {
             </div>
           )}
 
-          <label className="flex items-center space-x-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={sendEmails}
-              onChange={(e) => setSendEmails(e.target.checked)}
-              className="w-4 h-4"
-            />
-            <span className="text-sm">Also send emails</span>
-          </label>
-
           <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-            Message content comes from Admin-managed SMS and Email templates only.
+            Message content comes from Admin-managed SMS and Email templates only. Emails are automatically included when Passenger/NOK email addresses are available.
           </p>
         </div>
       </div>
