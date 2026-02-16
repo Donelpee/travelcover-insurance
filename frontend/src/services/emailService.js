@@ -150,13 +150,21 @@ export async function sendBulkEmails(passengers, manifestData, templateId = null
     let passengerTemplate, nokTemplate
 
     if (templateId) {
-      // Use specific template ID provided
-      const template = await getTemplateById(templateId)
-      if (!template) {
+      const selectedTemplate = await getTemplateById(templateId)
+      if (!selectedTemplate) {
         throw new Error('Selected template not found')
       }
-      passengerTemplate = template
-      nokTemplate = template
+
+      if (selectedTemplate.template_type === 'passenger') {
+        passengerTemplate = selectedTemplate
+        nokTemplate = await getTemplateByType('next_of_kin')
+      } else if (selectedTemplate.template_type === 'next_of_kin') {
+        passengerTemplate = await getTemplateByType('passenger')
+        nokTemplate = selectedTemplate
+      } else {
+        passengerTemplate = selectedTemplate
+        nokTemplate = selectedTemplate
+      }
     } else {
       // Use default templates by type
       passengerTemplate = await getTemplateByType('passenger')

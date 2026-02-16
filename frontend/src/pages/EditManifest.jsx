@@ -542,7 +542,7 @@ export default function EditManifest() {
           className="flex-1 bg-gradient-to-r from-green-600 to-green-700 text-white py-3.5 rounded-lg hover:from-green-700 hover:to-green-800 flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed font-medium shadow-lg transition-all"
         >
           <Save size={20} />
-          <span>{saving ? 'Saving...' : 'Save & Continue to SMS'}</span>
+          <span>{saving ? 'Saving...' : 'Save and Continue'}</span>
         </button>
       </div>
     </div>

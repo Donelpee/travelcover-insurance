@@ -180,6 +180,16 @@ export default function SendSMS() {
       setSending(true)
 
       try {
+        const { error: clearQueueError } = await supabase
+          .from('scheduled_jobs')
+          .delete()
+          .eq('manifest_id', manifest.id)
+          .eq('status', 'pending')
+
+        if (clearQueueError) {
+          console.warn('Unable to clear pending scheduled jobs before immediate send:', clearQueueError)
+        }
+
         const { smsResults, emailResults } = await sendImmediateNotifications({
           passengers,
           company,
@@ -196,6 +206,14 @@ export default function SendSMS() {
         }
 
         setSending(false)
+
+        if (smsResults.failed === smsResults.total) {
+          const firstFailure = smsResults.details?.find(detail => detail.status === 'failed')
+          warning(
+            'No SMS was delivered',
+            firstFailure?.error || 'Please verify SMS provider credentials and RPC permissions in Supabase.'
+          )
+        }
 
         const smsMessage = `SMS: ${smsResults.sent}/${smsResults.total}`
         const emailMessage = emailResults ? ` | Emails: ${emailResults.sent}/${emailResults.total}` : ''
