@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Camera, Upload, ArrowRight, Loader, X } from 'lucide-react'
 import Tesseract from 'tesseract.js'
@@ -23,10 +23,86 @@ export default function CaptureManifest() {
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
   )
 
-  function setImageFromBlob(blob) {
-    setImage(blob)
-    const url = URL.createObjectURL(blob)
-    setImagePreview(url)
+  const MAX_IMAGE_DIMENSION = 1600
+  const IMAGE_QUALITY = 0.82
+
+  useEffect(() => {
+    return () => {
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview)
+      }
+    }
+  }, [imagePreview])
+
+  function loadImageFromBlob(blob) {
+    return new Promise((resolve, reject) => {
+      const sourceUrl = URL.createObjectURL(blob)
+      const img = new Image()
+
+      img.onload = () => {
+        URL.revokeObjectURL(sourceUrl)
+        resolve(img)
+      }
+
+      img.onerror = () => {
+        URL.revokeObjectURL(sourceUrl)
+        reject(new Error('Unable to load image'))
+      }
+
+      img.src = sourceUrl
+    })
+  }
+
+  function toJpegBlob(canvas, quality = IMAGE_QUALITY) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob)
+        } else {
+          reject(new Error('Unable to encode image'))
+        }
+      }, 'image/jpeg', quality)
+    })
+  }
+
+  async function optimizeImageBlob(blob) {
+    const img = await loadImageFromBlob(blob)
+
+    const sourceWidth = img.naturalWidth || img.width
+    const sourceHeight = img.naturalHeight || img.height
+    const largestSide = Math.max(sourceWidth, sourceHeight)
+
+    let targetWidth = sourceWidth
+    let targetHeight = sourceHeight
+
+    if (largestSide > MAX_IMAGE_DIMENSION) {
+      const scale = MAX_IMAGE_DIMENSION / largestSide
+      targetWidth = Math.max(1, Math.round(sourceWidth * scale))
+      targetHeight = Math.max(1, Math.round(sourceHeight * scale))
+    }
+
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+    canvas.width = targetWidth
+    canvas.height = targetHeight
+    ctx.drawImage(img, 0, 0, targetWidth, targetHeight)
+
+    const optimizedBlob = await toJpegBlob(canvas, IMAGE_QUALITY)
+    return optimizedBlob
+  }
+
+  async function setImageFromBlob(blob) {
+    const optimizedBlob = await optimizeImageBlob(blob)
+
+    setImage((previousImage) => {
+      if (previousImage && imagePreview) {
+        URL.revokeObjectURL(imagePreview)
+      }
+      return optimizedBlob
+    })
+
+    const previewUrl = URL.createObjectURL(optimizedBlob)
+    setImagePreview(previewUrl)
   }
 
   function blobToDataUrl(blob) {
@@ -97,7 +173,7 @@ export default function CaptureManifest() {
     }
   }
 
-  function capturePhoto() {
+  async function capturePhoto() {
     const canvas = canvasRef.current
     const video = videoRef.current
     
@@ -115,16 +191,21 @@ export default function CaptureManifest() {
     const context = canvas.getContext('2d')
     context.drawImage(video, 0, 0, canvas.width, canvas.height)
     
-    canvas.toBlob((blob) => {
+    canvas.toBlob(async (blob) => {
       if (blob) {
-        setImageFromBlob(blob)
-        stopCamera()
-        success('Photo captured!', 'Ready to process')
+        try {
+          await setImageFromBlob(blob)
+          stopCamera()
+          success('Photo captured!', 'Ready to process')
+        } catch (captureError) {
+          console.error('Capture optimization failed:', captureError)
+          error('Capture failed', 'Please retake photo with a clearer, closer shot')
+        }
       }
-    }, 'image/jpeg', 0.95)
+    }, 'image/jpeg', 0.9)
   }
 
-  function handleFileUpload(e, source = 'upload') {
+  async function handleFileUpload(e, source = 'upload') {
     const file = e.target.files[0]
     if (file) {
       if (!file.type.startsWith('image/')) {
@@ -137,46 +218,59 @@ export default function CaptureManifest() {
         return
       }
 
-      if (file.type.startsWith('image/')) {
-        setImageFromBlob(file)
-        success(source === 'camera' ? 'Photo captured!' : 'Image uploaded!', 'Ready to process')
+      try {
+        if (file.type.startsWith('image/')) {
+          await setImageFromBlob(file)
+          success(source === 'camera' ? 'Photo captured!' : 'Image uploaded!', 'Ready to process')
+        }
+      } catch (uploadError) {
+        console.error('Upload optimization failed:', uploadError)
+        error('Image processing failed', 'Try another photo or use a lower-resolution image')
       }
     }
 
     e.target.value = ''
   }
 
-  function preprocessImage(imageUrl) {
-    return new Promise((resolve) => {
-      const img = new Image()
-      img.onload = () => {
-        const canvas = document.createElement('canvas')
-        const ctx = canvas.getContext('2d')
-        
-        canvas.width = img.width
-        canvas.height = img.height
-        
-        ctx.drawImage(img, 0, 0)
-        
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-        const data = imageData.data
-        
-        for (let i = 0; i < data.length; i += 4) {
-          const avg = (data[i] + data[i + 1] + data[i + 2]) / 3
-          const contrast = 1.5
-          const factor = (259 * (contrast + 255)) / (255 * (259 - contrast))
-          const newValue = factor * (avg - 128) + 128
-          
-          data[i] = newValue
-          data[i + 1] = newValue
-          data[i + 2] = newValue
-        }
-        
-        ctx.putImageData(imageData, 0, 0)
-        resolve(canvas.toDataURL('image/jpeg', 0.95))
-      }
-      img.src = imageUrl
-    })
+  async function preprocessImage(imageBlob) {
+    const img = await loadImageFromBlob(imageBlob)
+
+    const sourceWidth = img.naturalWidth || img.width
+    const sourceHeight = img.naturalHeight || img.height
+    const largestSide = Math.max(sourceWidth, sourceHeight)
+
+    let targetWidth = sourceWidth
+    let targetHeight = sourceHeight
+
+    if (largestSide > MAX_IMAGE_DIMENSION) {
+      const scale = MAX_IMAGE_DIMENSION / largestSide
+      targetWidth = Math.max(1, Math.round(sourceWidth * scale))
+      targetHeight = Math.max(1, Math.round(sourceHeight * scale))
+    }
+
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d')
+
+    canvas.width = targetWidth
+    canvas.height = targetHeight
+    ctx.drawImage(img, 0, 0, targetWidth, targetHeight)
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    const data = imageData.data
+
+    for (let i = 0; i < data.length; i += 4) {
+      const avg = (data[i] + data[i + 1] + data[i + 2]) / 3
+      const contrast = 1.35
+      const factor = (259 * (contrast + 255)) / (255 * (259 - contrast))
+      const newValue = factor * (avg - 128) + 128
+
+      data[i] = newValue
+      data[i + 1] = newValue
+      data[i + 2] = newValue
+    }
+
+    ctx.putImageData(imageData, 0, 0)
+    return canvas
   }
 
   async function processImage() {
@@ -210,7 +304,7 @@ export default function CaptureManifest() {
 
       info('Running OCR fallback...', 'Trying text extraction from the image')
 
-      const processedImage = await preprocessImage(imagePreview)
+      const processedImage = await preprocessImage(image)
 
       const result = await Tesseract.recognize(
         processedImage,
@@ -268,6 +362,9 @@ export default function CaptureManifest() {
   }
 
   function resetCapture() {
+    if (imagePreview) {
+      URL.revokeObjectURL(imagePreview)
+    }
     setImage(null)
     setImagePreview(null)
     setExtractedText('')
