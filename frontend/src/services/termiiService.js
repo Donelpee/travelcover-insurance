@@ -12,6 +12,24 @@ function formatTripDate(tripDate) {
   })
 }
 
+function normalizePhoneNumber(input) {
+  const value = (input || '').trim()
+  if (!value) return null
+
+  if (value.startsWith('+')) {
+    const digits = value.replace(/\D/g, '')
+    return digits.length >= 10 ? `+${digits}` : null
+  }
+
+  const digits = value.replace(/\D/g, '')
+  if (!digits) return null
+  if (digits.startsWith('234') && digits.length >= 13) return `+${digits}`
+  if (digits.length === 11 && digits.startsWith('0')) return `+234${digits.slice(1)}`
+  if (digits.length >= 10) return `+${digits}`
+
+  return null
+}
+
 function applyTemplatePlaceholders(templateText, passenger, manifestData, recipientType = 'passenger') {
   const notificationStage = manifestData.notification_stage || 'departure'
   const isNextOfKin = recipientType === 'next_of_kin'
@@ -85,15 +103,23 @@ export async function scheduleBulkSMS(passengers, manifestData, scheduledTime) {
 
   try {
     for (const passenger of passengers) {
+      const passengerPhone = normalizePhoneNumber(passenger.phone_number)
+      const nokPhone = normalizePhoneNumber(passenger.next_of_kin_phone)
+
+      if (!passengerPhone || !nokPhone) {
+        results.failed += 2
+        continue
+      }
+
       // Schedule passenger SMS
       await supabase.from('scheduled_jobs').insert({
         manifest_id: manifestData.manifest_id || null,
-        recipient_phone: passenger.phone_number,
+        recipient_phone: passengerPhone,
         message_content: `Hello ${passenger.full_name}, your ${manifestData.departure} to ${manifestData.destination} trip with ${manifestData.company} on ${new Date(manifestData.trip_date).toLocaleDateString()} is active and insured. Ref: ${manifestData.manifest_reference || 'N/A'}. Support: +2348000000000.`,
         scheduled_time: scheduledTime,
         status: 'pending',
         recipient_type: 'passenger',
-        phone_number: passenger.phone_number,
+        phone_number: passengerPhone,
         passenger_id: passenger.id
       })
       results.scheduled++
@@ -101,12 +127,12 @@ export async function scheduleBulkSMS(passengers, manifestData, scheduledTime) {
       // Schedule NOK SMS
       await supabase.from('scheduled_jobs').insert({
         manifest_id: manifestData.manifest_id || null,
-        recipient_phone: passenger.next_of_kin_phone,
+        recipient_phone: nokPhone,
         message_content: `Travel update: ${passenger.full_name} is on trip ${manifestData.departure} to ${manifestData.destination} with ${manifestData.company} on ${new Date(manifestData.trip_date).toLocaleDateString()}. Insurance is active. Ref: ${manifestData.manifest_reference || 'N/A'}. Support: +2348000000000.`,
         scheduled_time: scheduledTime,
         status: 'pending',
         recipient_type: 'next_of_kin',
-        phone_number: passenger.next_of_kin_phone,
+        phone_number: nokPhone,
         passenger_id: passenger.id
       })
       results.scheduled++
@@ -194,10 +220,22 @@ export async function sendBulkSMS(passengers, manifestData) {
   const nextOfKinTemplate = resolveTemplateByRecipient(templates, 'next_of_kin')
 
   for (const passenger of passengers) {
+    const passengerPhone = normalizePhoneNumber(passenger.phone_number)
+    const nokPhone = normalizePhoneNumber(passenger.next_of_kin_phone)
+
     // Send to passenger
     results.total++
 
-    if (!passengerTemplate) {
+    if (!passengerPhone) {
+      results.failed++
+      results.details.push({
+        recipient: passenger.full_name,
+        phone: passenger.phone_number,
+        type: 'passenger',
+        status: 'failed',
+        error: 'Invalid passenger phone format'
+      })
+    } else if (!passengerTemplate) {
       results.failed++
       results.details.push({
         recipient: passenger.full_name,
@@ -210,7 +248,7 @@ export async function sendBulkSMS(passengers, manifestData) {
       const passengerMessage = applyTemplatePlaceholders(passengerTemplate.message_content, passenger, manifestData, 'passenger')
 
       const passengerResult = await sendTermiiSMS(
-        passenger.phone_number,
+        passengerPhone,
         passengerMessage,
         passenger.id,
         'passenger'
@@ -239,7 +277,16 @@ export async function sendBulkSMS(passengers, manifestData) {
     // Send to next of kin
     results.total++
 
-    if (!nextOfKinTemplate) {
+    if (!nokPhone) {
+      results.failed++
+      results.details.push({
+        recipient: passenger.next_of_kin_name,
+        phone: passenger.next_of_kin_phone,
+        type: 'next_of_kin',
+        status: 'failed',
+        error: 'Invalid next of kin phone format'
+      })
+    } else if (!nextOfKinTemplate) {
       results.failed++
       results.details.push({
         recipient: passenger.next_of_kin_name,
@@ -252,7 +299,7 @@ export async function sendBulkSMS(passengers, manifestData) {
       const nokMessage = applyTemplatePlaceholders(nextOfKinTemplate.message_content, passenger, manifestData, 'next_of_kin')
 
       const nokResult = await sendTermiiSMS(
-        passenger.next_of_kin_phone,
+        nokPhone,
         nokMessage,
         passenger.id,
         'next_of_kin'

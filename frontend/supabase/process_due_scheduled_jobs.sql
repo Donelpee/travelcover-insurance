@@ -29,6 +29,13 @@ declare
   rendered_body text;
   email_subject text;
   email_body text;
+  manifest_trip_date date;
+  manifest_departure_time time;
+  manifest_arrival_time time;
+  route_duration_hours numeric;
+  departure_ts timestamptz;
+  arrival_ts timestamptz;
+  arrival_send_time timestamptz;
   notification_stage text;
   stage_label text;
   stage_message text;
@@ -49,7 +56,7 @@ begin
   end if;
 
   for scheduled_record in
-    select id, passenger_id, recipient_type, phone_number, message_content, message_type
+    select id, passenger_id, recipient_type, phone_number, message_content, message_type, scheduled_time
     from public.scheduled_jobs
     where status = 'pending'
       and scheduled_time <= now()
@@ -59,6 +66,57 @@ begin
     processed_count := processed_count + 1;
 
     begin
+      if scheduled_record.message_type = 'arrival_30min' then
+        manifest_trip_date := null;
+        manifest_departure_time := null;
+        manifest_arrival_time := null;
+        route_duration_hours := null;
+        departure_ts := null;
+        arrival_ts := null;
+        arrival_send_time := null;
+
+        select
+          m.trip_date::date,
+          m.departure_time,
+          m.arrival_time,
+          r.duration_hours
+        into manifest_trip_date,
+             manifest_departure_time,
+             manifest_arrival_time,
+             route_duration_hours
+        from public.passengers p
+        left join public.manifests m on m.id = p.manifest_id
+        left join public.routes r on r.id = m.route_id
+        where p.id = scheduled_record.passenger_id
+        limit 1;
+
+        if manifest_trip_date is not null and manifest_departure_time is not null then
+          departure_ts := (manifest_trip_date::text || ' ' || manifest_departure_time::text)::timestamptz;
+        end if;
+
+        if manifest_trip_date is not null and manifest_arrival_time is not null then
+          arrival_ts := (manifest_trip_date::text || ' ' || manifest_arrival_time::text)::timestamptz;
+
+          if departure_ts is not null and arrival_ts <= departure_ts then
+            arrival_ts := arrival_ts + interval '1 day';
+          end if;
+        elsif departure_ts is not null then
+          arrival_ts := departure_ts + make_interval(secs => greatest(1::numeric, coalesce(route_duration_hours, 8)) * 3600);
+        end if;
+
+        if arrival_ts is not null then
+          arrival_send_time := arrival_ts - interval '30 minutes';
+
+          if arrival_send_time > now() then
+            update public.scheduled_jobs
+            set scheduled_time = arrival_send_time
+            where id = scheduled_record.id;
+
+            continue;
+          end if;
+        end if;
+      end if;
+
       -- Uses your existing RPC integration that sends SMS and writes provider logs
       select public.send_sms_via_termii(
         phone_number := scheduled_record.phone_number,

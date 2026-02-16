@@ -39,6 +39,24 @@ function getSafeMessageType(timingType) {
   return timingType === 'before_end' ? 'arrival_30min' : 'departure_30min'
 }
 
+function normalizePhoneNumber(input) {
+  const value = (input || '').trim()
+  if (!value) return null
+
+  if (value.startsWith('+')) {
+    const digits = value.replace(/\D/g, '')
+    return digits.length >= 10 ? `+${digits}` : null
+  }
+
+  const digits = value.replace(/\D/g, '')
+  if (!digits) return null
+  if (digits.startsWith('234') && digits.length >= 13) return `+${digits}`
+  if (digits.length === 11 && digits.startsWith('0')) return `+234${digits.slice(1)}`
+  if (digits.length >= 10) return `+${digits}`
+
+  return null
+}
+
 function buildDefaultScheduledMessage(passenger, manifest, route, rule) {
   const tripDate = new Date(manifest.trip_date).toLocaleDateString('en-US', {
     weekday: 'short',
@@ -147,28 +165,30 @@ export async function queueArrivalReminderJobs(manifest, passengers, route, minu
   const jobs = []
 
   for (const passenger of passengers) {
-    if (passenger.phone_number) {
+    const passengerPhone = normalizePhoneNumber(passenger.phone_number)
+    if (passengerPhone) {
       const template = resolveSmsTemplateForRecipient(templates || [], 'passenger')
       jobs.push({
         manifest_id: manifest.id,
         passenger_id: passenger.id,
         message_type: 'arrival_30min',
         recipient_type: 'passenger',
-        phone_number: passenger.phone_number,
+        phone_number: passengerPhone,
         message_content: generateMessageFromTemplate(template?.message_content || null, passenger, manifest, route, rulePassenger),
         scheduled_time: scheduledDateTime.toISOString(),
         status: 'pending'
       })
     }
 
-    if (passenger.next_of_kin_phone) {
+    const nokPhone = normalizePhoneNumber(passenger.next_of_kin_phone)
+    if (nokPhone) {
       const template = resolveSmsTemplateForRecipient(templates || [], 'next_of_kin')
       jobs.push({
         manifest_id: manifest.id,
         passenger_id: passenger.id,
         message_type: 'arrival_30min',
         recipient_type: 'next_of_kin',
-        phone_number: passenger.next_of_kin_phone,
+        phone_number: nokPhone,
         message_content: generateMessageFromTemplate(template?.message_content || null, passenger, manifest, route, ruleNextOfKin),
         scheduled_time: scheduledDateTime.toISOString(),
         status: 'pending'
@@ -276,8 +296,12 @@ export async function scheduleMessagesForManifest(manifest, passengers, route) {
         // Check if rule applies to this recipient type
         if (rule.recipient_type === 'passenger' || rule.recipient_type === 'next_of_kin') {
           const phone = rule.recipient_type === 'passenger' 
-            ? passenger.phone_number 
-            : passenger.next_of_kin_phone
+            ? normalizePhoneNumber(passenger.phone_number)
+            : normalizePhoneNumber(passenger.next_of_kin_phone)
+
+          if (!phone) {
+            continue
+          }
 
           // Calculate when to send
           const baseTime = rule.timing_type === 'after_start' ? tripStart : tripEnd
@@ -405,28 +429,30 @@ export async function queueDepartureImmediateJobs(manifest, passengers, route) {
   const jobs = []
 
   for (const passenger of passengers) {
-    if (passenger.phone_number) {
+    const passengerPhone = normalizePhoneNumber(passenger.phone_number)
+    if (passengerPhone) {
       const template = resolveSmsTemplateForRecipient(templates || [], 'passenger')
       jobs.push({
         manifest_id: manifest.id,
         passenger_id: passenger.id,
         message_type: 'departure_30min',
         recipient_type: 'passenger',
-        phone_number: passenger.phone_number,
+        phone_number: passengerPhone,
         message_content: generateMessageFromTemplate(template?.message_content || null, passenger, manifest, route, rulePassenger),
         scheduled_time: nowIso,
         status: 'pending'
       })
     }
 
-    if (passenger.next_of_kin_phone) {
+    const nokPhone = normalizePhoneNumber(passenger.next_of_kin_phone)
+    if (nokPhone) {
       const template = resolveSmsTemplateForRecipient(templates || [], 'next_of_kin')
       jobs.push({
         manifest_id: manifest.id,
         passenger_id: passenger.id,
         message_type: 'departure_30min',
         recipient_type: 'next_of_kin',
-        phone_number: passenger.next_of_kin_phone,
+        phone_number: nokPhone,
         message_content: generateMessageFromTemplate(template?.message_content || null, passenger, manifest, route, ruleNextOfKin),
         scheduled_time: nowIso,
         status: 'pending'
@@ -527,14 +553,29 @@ async function markMessageAsFailed(messageId, errorMessage) {
  */
 export async function processDueScheduledJobs() {
   const rpcResults = await processDueScheduledJobsViaRpc()
-  if (rpcResults.success) {
+  if (
+    rpcResults.success
+    && ((rpcResults.processed || 0) > 0 || (rpcResults.sent || 0) > 0 || (rpcResults.failed || 0) > 0)
+  ) {
     return rpcResults
   }
 
   const dueMessages = await getPendingMessages()
 
+  if (dueMessages.length === 0) {
+    return rpcResults.success
+      ? rpcResults
+      : {
+          mode: 'client-fallback',
+          processed: 0,
+          sent: 0,
+          failed: 0,
+          total: 0
+        }
+  }
+
   const results = {
-    mode: 'client-fallback',
+    mode: rpcResults.success ? 'rpc-zero-fallback' : 'client-fallback',
     processed: 0,
     sent: 0,
     failed: 0,
