@@ -116,11 +116,24 @@ begin
           into template_subject, template_body
           from public.email_templates et
           where et.is_active = true
-            and et.template_type = case
-              when scheduled_record.recipient_type = 'next_of_kin' then 'next_of_kin'
-              else 'passenger'
-            end
-          order by et.updated_at desc nulls last, et.created_at desc nulls last
+            and et.template_type in (
+              case
+                when scheduled_record.recipient_type = 'next_of_kin' then 'next_of_kin'
+                else 'passenger'
+              end,
+              'general'
+            )
+          order by
+            case
+              when et.template_type = case
+                when scheduled_record.recipient_type = 'next_of_kin' then 'next_of_kin'
+                else 'passenger'
+              end then 0
+              when et.template_type = 'general' then 1
+              else 2
+            end,
+            et.updated_at desc nulls last,
+            et.created_at desc nulls last
           limit 1;
 
           rendered_subject := coalesce(template_subject, email_subject);
@@ -226,11 +239,24 @@ begin
           into template_subject, template_body
           from public.email_templates et
           where et.is_active = true
-            and et.template_type = case
-              when scheduled_record.recipient_type = 'next_of_kin' then 'next_of_kin'
-              else 'passenger'
-            end
-          order by et.updated_at desc nulls last, et.created_at desc nulls last
+            and et.template_type in (
+              case
+                when scheduled_record.recipient_type = 'next_of_kin' then 'next_of_kin'
+                else 'passenger'
+              end,
+              'general'
+            )
+          order by
+            case
+              when et.template_type = case
+                when scheduled_record.recipient_type = 'next_of_kin' then 'next_of_kin'
+                else 'passenger'
+              end then 0
+              when et.template_type = 'general' then 1
+              else 2
+            end,
+            et.updated_at desc nulls last,
+            et.created_at desc nulls last
           limit 1;
 
           rendered_subject := coalesce(template_subject, email_subject);

@@ -753,9 +753,15 @@ export default function AdminSettings() {
                     <span className={`inline-block px-2 py-1 text-xs font-semibold rounded-full mt-2 ${
                       template.template_type === 'passenger' 
                         ? 'bg-blue-100 text-blue-800' 
-                        : 'bg-green-100 text-green-800'
+                        : template.template_type === 'next_of_kin'
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-violet-100 text-violet-800'
                     }`}>
-                      {template.template_type === 'passenger' ? 'FOR PASSENGER' : 'FOR NEXT OF KIN'}
+                      {template.template_type === 'passenger'
+                        ? 'FOR PASSENGER'
+                        : template.template_type === 'next_of_kin'
+                          ? 'FOR NEXT OF KIN'
+                          : 'GENERAL (PASSENGER + NOK)'}
                     </span>
                   </div>
                   <div className="flex space-x-2">
@@ -1157,6 +1163,7 @@ export default function AdminSettings() {
                   >
                     <option value="passenger">For Passenger</option>
                     <option value="next_of_kin">For Next of Kin</option>
+                    <option value="general">General (Passenger + Next of Kin)</option>
                   </select>
                 </div>
 

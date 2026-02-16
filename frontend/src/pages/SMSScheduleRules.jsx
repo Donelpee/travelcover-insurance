@@ -526,7 +526,7 @@ export default function SMSScheduleRules() {
                   >
                     <option value="">Use default message</option>
                     {templates
-                      .filter(t => t.template_type === ruleForm.recipient_type)
+                      .filter(t => t.template_type === ruleForm.recipient_type || t.template_type === 'general')
                       .map(template => (
                         <option key={template.id} value={template.id}>
                           {template.template_name}
