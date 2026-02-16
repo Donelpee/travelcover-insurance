@@ -27,7 +27,7 @@ begin
     values (
       'TravelCover Unified Journey SMS',
       'general',
-      'TravelCover update: {passenger_name} is on a protected trip from {departure} to {destination} with {company} on {trip_date}. Ref: {manifest_reference}. For urgent support, call +234 800 000 0000.',
+      'TravelCover {stage_label}: {passenger_name} on {departure} to {destination} with {company}. Travel date: {trip_date}. Reference: {manifest_reference}. For urgent support, call +234 800 000 0000.',
       true
     );
   exception
@@ -42,13 +42,13 @@ begin
       (
         'TravelCover Unified Journey SMS (Passenger)',
         'passenger',
-        'TravelCover update: {passenger_name} is on a protected trip from {departure} to {destination} with {company} on {trip_date}. Ref: {manifest_reference}. For urgent support, call +234 800 000 0000.',
+        'TravelCover {stage_label}: {passenger_name} on {departure} to {destination} with {company}. Travel date: {trip_date}. Reference: {manifest_reference}. For urgent support, call +234 800 000 0000.',
         true
       ),
       (
         'TravelCover Unified Journey SMS (Next of Kin)',
         'next_of_kin',
-        'TravelCover update: {passenger_name} is on a protected trip from {departure} to {destination} with {company} on {trip_date}. Ref: {manifest_reference}. For urgent support, call +234 800 000 0000.',
+        'TravelCover {stage_label}: {passenger_name} on {departure} to {destination} with {company}. Travel date: {trip_date}. Reference: {manifest_reference}. For urgent support, call +234 800 000 0000.',
         true
       );
   end;

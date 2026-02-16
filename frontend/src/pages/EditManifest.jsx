@@ -3,7 +3,12 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { Plus, Trash2, Save, Users } from 'lucide-react'
 import { success, error, warning, confirm as confirmToast } from '../utils/notifications'
-import { queueImmediateArrivalReminders, sendImmediateNotifications, scheduleManifestNotifications } from '../services/notificationService'
+import {
+  processDueNotifications,
+  queueImmediateArrivalReminders,
+  queueImmediateDepartureNotifications,
+  scheduleManifestNotifications
+} from '../services/notificationService'
 
 export default function EditManifest() {
   const navigate = useNavigate()
@@ -397,19 +402,28 @@ export default function EditManifest() {
         manifest_reference: manifest.manifest_reference || 'N/A'
       }
 
-      const { smsResults, emailResults } = await sendImmediateNotifications({
+      const departureQueueResult = await queueImmediateDepartureNotifications({
+        manifest: {
+          ...manifestForNotification,
+          ...manifestDataForTemplates
+        },
         passengers: insertedPassengers,
-        company: selectedCompany,
-        route: selectedRoute,
-        manifest: manifestDataForTemplates,
-        sendEmails: true,
-        selectedTemplateId: null
+        route: selectedRoute
       })
+
+      const processedResult = await processDueNotifications({ rpcOnly: true })
+
+      if (!processedResult?.success) {
+        warning('Immediate send encountered an issue', processedResult?.error || 'Unable to process departure notifications')
+      }
 
       let arrivalQueueResult = { count: 0 }
       try {
         arrivalQueueResult = await queueImmediateArrivalReminders({
-          manifest: manifestForNotification,
+          manifest: {
+            ...manifestForNotification,
+            ...manifestDataForTemplates
+          },
           passengers: insertedPassengers,
           route: selectedRoute,
           minutesBeforeArrival: 30
@@ -421,14 +435,13 @@ export default function EditManifest() {
 
       console.log('✅ All done!')
 
-      const smsSummary = `SMS ${smsResults?.sent || 0}/${smsResults?.total || 0}`
-      const emailSummary = emailResults ? ` | Email ${emailResults.sent}/${emailResults.total}` : ''
+      const smsSummary = `Processed ${processedResult?.sent || 0} notification job(s)`
+      const queueNowSummary = departureQueueResult?.count ? ` | Departure queued: ${departureQueueResult.count}` : ''
       const queueSummary = arrivalQueueResult?.count ? ` | Arrival reminders queued: ${arrivalQueueResult.count}` : ''
-      success('Manifest saved and notifications processed', smsSummary + emailSummary + queueSummary)
+      success('Manifest saved and notifications processed', smsSummary + queueNowSummary + queueSummary)
 
-      if (smsResults?.failed === smsResults?.total) {
-        const firstFailure = smsResults.details?.find(detail => detail.status === 'failed')
-        warning('SMS not delivered', firstFailure?.error || 'Please verify SMS provider settings')
+      if ((processedResult?.failed || 0) > 0 && (processedResult?.sent || 0) === 0) {
+        warning('SMS not delivered', 'Please verify SMS provider settings and scheduled job error logs')
       }
 
       navigate('/')

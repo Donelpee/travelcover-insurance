@@ -3,6 +3,7 @@ import { sendBulkSMS } from './termiiService'
 import { sendBulkEmails } from './emailService'
 import {
   scheduleMessagesForManifest,
+  queueDepartureImmediateJobs,
   queueArrivalReminderJobs,
   processDueScheduledJobs,
   processDueScheduledJobsViaRpc
@@ -123,6 +124,20 @@ export async function queueImmediateArrivalReminders({
     passengers,
     route,
     minutesBeforeArrival
+  )
+
+  return result
+}
+
+export async function queueImmediateDepartureNotifications({
+  manifest,
+  passengers,
+  route
+}) {
+  const result = await queueDepartureImmediateJobs(
+    manifest,
+    passengers,
+    route
   )
 
   return result

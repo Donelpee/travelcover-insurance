@@ -47,19 +47,25 @@ function buildDefaultScheduledMessage(passenger, manifest, route, rule) {
     day: 'numeric'
   })
 
-  const referenceTimeLabel = rule.timing_type === 'before_end'
-    ? `${rule.minutes_offset} mins before arrival`
-    : `${rule.minutes_offset} mins after departure`
-
   const journeyLabel = `${route.departure_location} → ${route.destination}`
   const companyLabel = manifest.company_name || 'your transport operator'
   const ref = manifest.manifest_reference || 'N/A'
 
-  if (rule.recipient_type === 'next_of_kin') {
-    return `Travel update: ${passenger.full_name} is on trip ${journeyLabel} with ${companyLabel} (${tripDate}). Checkpoint: ${referenceTimeLabel}. Insurance is active. Ref: ${ref}. Support: +2348000000000.`
+  const isArrivalReminder = rule.timing_type === 'before_end'
+
+  if (isArrivalReminder) {
+    if (rule.recipient_type === 'next_of_kin') {
+      return `TravelCover update for ${passenger.next_of_kin_name}: ${passenger.full_name} is expected to arrive in about ${rule.minutes_offset} minutes on the ${journeyLabel} trip with ${companyLabel}. Date: ${tripDate}. Ref: ${ref}. Support: +234 800 000 0000.`
+    }
+
+    return `TravelCover arrival alert: Hello ${passenger.full_name}, you are expected to arrive at your destination in about ${rule.minutes_offset} minutes on your ${journeyLabel} trip with ${companyLabel}. Date: ${tripDate}. Ref: ${ref}. Support: +234 800 000 0000.`
   }
 
-  return `Hello ${passenger.full_name}, your ${journeyLabel} trip with ${companyLabel} (${tripDate}) is active and insured. Checkpoint: ${referenceTimeLabel}. Ref: ${ref}. Support: +2348000000000.`
+  if (rule.recipient_type === 'next_of_kin') {
+    return `TravelCover departure confirmation for ${passenger.next_of_kin_name}: ${passenger.full_name} has departed on the ${journeyLabel} trip with ${companyLabel}. Date: ${tripDate}. Ref: ${ref}. For assistance, call +234 800 000 0000.`
+  }
+
+  return `TravelCover departure confirmation: Hello ${passenger.full_name}, your ${journeyLabel} trip with ${companyLabel} has been confirmed and cover is active. Date: ${tripDate}. Ref: ${ref}. Support: +234 800 000 0000.`
 }
 
 function resolveSmsTemplateForRecipient(templates, recipientType) {
@@ -322,6 +328,11 @@ function generateMessageFromTemplate(template, passenger, manifest, route, rule)
     return buildDefaultScheduledMessage(passenger, manifest, route, rule)
   }
 
+  const notificationStage = rule.timing_type === 'before_end' ? 'arrival' : 'departure'
+  const stageLabel = notificationStage === 'arrival'
+    ? `Arrival update (${rule.minutes_offset} mins before expected arrival)`
+    : `Departure update`
+
   return template
     .replace(/{passenger_name}/g, passenger.full_name)
     .replace(/{next_of_kin_name}/g, passenger.next_of_kin_name)
@@ -331,12 +342,89 @@ function generateMessageFromTemplate(template, passenger, manifest, route, rule)
     .replace(/{manifest_reference}/g, manifest.manifest_reference || 'N/A')
     .replace(/{departure_time}/g, manifest.departure_time || '')
     .replace(/{arrival_time}/g, manifest.arrival_time || '')
+    .replace(/{notification_stage}/g, notificationStage)
+    .replace(/{stage_label}/g, stageLabel)
     .replace(/{trip_date}/g, new Date(manifest.trip_date).toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
       day: 'numeric'
     }))
+}
+
+export async function queueDepartureImmediateJobs(manifest, passengers, route) {
+  const nowIso = new Date().toISOString()
+
+  const { data: templates, error: templatesError } = await supabase
+    .from('sms_templates')
+    .select('id, template_type, message_content, is_active, updated_at, created_at')
+    .eq('is_active', true)
+    .order('updated_at', { ascending: false })
+
+  if (templatesError) {
+    throw templatesError
+  }
+
+  const rulePassenger = {
+    recipient_type: 'passenger',
+    timing_type: 'after_start',
+    minutes_offset: 0
+  }
+
+  const ruleNextOfKin = {
+    recipient_type: 'next_of_kin',
+    timing_type: 'after_start',
+    minutes_offset: 0
+  }
+
+  const jobs = []
+
+  for (const passenger of passengers) {
+    if (passenger.phone_number) {
+      const template = resolveSmsTemplateForRecipient(templates || [], 'passenger')
+      jobs.push({
+        manifest_id: manifest.id,
+        passenger_id: passenger.id,
+        message_type: 'departure_30min',
+        recipient_type: 'passenger',
+        phone_number: passenger.phone_number,
+        message_content: generateMessageFromTemplate(template?.message_content || null, passenger, manifest, route, rulePassenger),
+        scheduled_time: nowIso,
+        status: 'pending'
+      })
+    }
+
+    if (passenger.next_of_kin_phone) {
+      const template = resolveSmsTemplateForRecipient(templates || [], 'next_of_kin')
+      jobs.push({
+        manifest_id: manifest.id,
+        passenger_id: passenger.id,
+        message_type: 'departure_30min',
+        recipient_type: 'next_of_kin',
+        phone_number: passenger.next_of_kin_phone,
+        message_content: generateMessageFromTemplate(template?.message_content || null, passenger, manifest, route, ruleNextOfKin),
+        scheduled_time: nowIso,
+        status: 'pending'
+      })
+    }
+  }
+
+  if (jobs.length === 0) {
+    return { success: true, count: 0 }
+  }
+
+  const { error: insertError } = await supabase
+    .from('scheduled_jobs')
+    .insert(jobs)
+
+  if (insertError) {
+    throw insertError
+  }
+
+  return {
+    success: true,
+    count: jobs.length
+  }
 }
 
 /**
