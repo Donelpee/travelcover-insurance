@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../services/supabase'
-import { createAppUser, deleteAppUser, listAppUsers, updateAppUser } from '../services/appUsers'
+import { createAppUser, deleteAppUser, listAppUsers, resetAppUserPassword, updateAppUser } from '../services/appUsers'
 import { Settings, Users, MessageSquare, Save, Plus, Edit, Trash2, X, Send, Shield, CheckCircle, Mail, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { success, error, confirm as confirmToast } from '../utils/notifications'
 import EmailTemplates from './EmailTemplates'
@@ -25,6 +25,13 @@ export default function AdminSettings() {
   const [userSearch, setUserSearch] = useState('')
   const [userPage, setUserPage] = useState(1)
   const [userPageSize, setUserPageSize] = useState(10)
+  const [showResetPasswordModal, setShowResetPasswordModal] = useState(false)
+  const [resettingUser, setResettingUser] = useState(null)
+  const [resetPasswordForm, setResetPasswordForm] = useState({
+    new_password: '',
+    confirm_password: ''
+  })
+  const [savingPasswordReset, setSavingPasswordReset] = useState(false)
 
   // Templates state
   const [templates, setTemplates] = useState([])
@@ -155,6 +162,46 @@ export default function AdminSettings() {
       fetchUsers()
     } catch (err) {
       error('Error deleting user', err.message)
+    }
+  }
+
+  async function handlePasswordResetSubmit(e) {
+    e.preventDefault()
+
+    const newPassword = resetPasswordForm.new_password
+    const confirmPassword = resetPasswordForm.confirm_password
+
+    if (!resettingUser?.id) {
+      error('Reset password error', 'No user selected for password reset')
+      return
+    }
+
+    if (!newPassword || newPassword.length < 8) {
+      error('Validation error', 'New password must be at least 8 characters')
+      return
+    }
+
+    if (newPassword !== confirmPassword) {
+      error('Validation error', 'Password confirmation does not match')
+      return
+    }
+
+    setSavingPasswordReset(true)
+
+    try {
+      await resetAppUserPassword({
+        id: resettingUser.id,
+        new_password: newPassword
+      })
+
+      success('Password reset!', `A new sign-in password has been set for ${resettingUser.email}.`)
+      setShowResetPasswordModal(false)
+      setResettingUser(null)
+      setResetPasswordForm({ new_password: '', confirm_password: '' })
+    } catch (err) {
+      error('Error resetting password', err.message)
+    } finally {
+      setSavingPasswordReset(false)
     }
   }
 
@@ -634,6 +681,16 @@ export default function AdminSettings() {
                       <Edit size={18} />
                     </button>
                     <button
+                      onClick={() => {
+                        setResettingUser(user)
+                        setResetPasswordForm({ new_password: '', confirm_password: '' })
+                        setShowResetPasswordModal(true)
+                      }}
+                      className="text-amber-600 hover:text-amber-900 mr-3 font-medium"
+                    >
+                      Reset Password
+                    </button>
+                    <button
                       onClick={() => handleDeleteUser(user.id)}
                       className="btn-icon-danger"
                     >
@@ -1072,6 +1129,11 @@ export default function AdminSettings() {
                     onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
                     className="w-full px-3 py-2 border rounded-lg"
                   />
+                  {editingUser && (
+                    <p className="text-xs text-gray-500 mt-2">
+                      Password resets are now handled from the dedicated Reset Password action in the user list.
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -1100,6 +1162,81 @@ export default function AdminSettings() {
                   className="btn-primary flex-1"
                 >
                   {editingUser ? 'Update' : 'Create'} User
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showResetPasswordModal && resettingUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-xl font-bold">Reset Password</h3>
+                <p className="text-sm text-gray-500 mt-1">{resettingUser.email}</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowResetPasswordModal(false)
+                  setResettingUser(null)
+                  setResetPasswordForm({ new_password: '', confirm_password: '' })
+                }}
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <form onSubmit={handlePasswordResetSubmit}>
+              <div className="space-y-4">
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  This changes the user&apos;s real Supabase Auth sign-in password.
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">New Password *</label>
+                  <input
+                    type="password"
+                    required
+                    minLength={8}
+                    value={resetPasswordForm.new_password}
+                    onChange={(e) => setResetPasswordForm({ ...resetPasswordForm, new_password: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">Confirm Password *</label>
+                  <input
+                    type="password"
+                    required
+                    minLength={8}
+                    value={resetPasswordForm.confirm_password}
+                    onChange={(e) => setResetPasswordForm({ ...resetPasswordForm, confirm_password: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+              </div>
+
+              <div className="flex space-x-3 mt-6">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowResetPasswordModal(false)
+                    setResettingUser(null)
+                    setResetPasswordForm({ new_password: '', confirm_password: '' })
+                  }}
+                  className="btn-secondary flex-1"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingPasswordReset}
+                  className="flex-1 rounded-lg bg-amber-500 px-4 py-2 text-white font-medium hover:bg-amber-600 disabled:opacity-50"
+                >
+                  {savingPasswordReset ? 'Resetting...' : 'Reset Password'}
                 </button>
               </div>
             </form>

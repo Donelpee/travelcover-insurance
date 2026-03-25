@@ -24,6 +24,18 @@ async function invokeManageAppUsers(method, body) {
   return data
 }
 
+async function invokeResetAppUserPassword(body) {
+  const { data, error } = await supabase.functions.invoke('reset-app-user-password', {
+    body,
+  })
+
+  if (error) {
+    throw new Error(await extractFunctionErrorMessage(error))
+  }
+
+  return data
+}
+
 export async function getCurrentAppUserProfile() {
   const { data, error } = await supabase.rpc('get_current_app_user_profile')
 
@@ -51,4 +63,8 @@ export async function updateAppUser(payload) {
 
 export async function deleteAppUser(id) {
   return invokeManageAppUsers('DELETE', { id })
+}
+
+export async function resetAppUserPassword(payload) {
+  return invokeResetAppUserPassword(payload)
 }
