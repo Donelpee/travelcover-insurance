@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../services/supabase'
+import { createAppUser, deleteAppUser, listAppUsers, updateAppUser } from '../services/appUsers'
 import { Settings, Users, MessageSquare, Save, Plus, Edit, Trash2, X, Send, Shield, CheckCircle, Mail, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { success, error, confirm as confirmToast } from '../utils/notifications'
 import EmailTemplates from './EmailTemplates'
@@ -84,12 +85,7 @@ export default function AdminSettings() {
   // ====== USER MANAGEMENT ======
   async function fetchUsers() {
     try {
-      const { data, error: fetchError } = await supabase
-        .from('app_users')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      if (fetchError) throw fetchError
+      const data = await listAppUsers()
       setUsers(data || [])
     } catch (err) {
       console.error('Error fetching users:', err)
@@ -120,34 +116,23 @@ export default function AdminSettings() {
     
     try {
       if (editingUser) {
-        const updateData = {
+        await updateAppUser({
+          id: editingUser.id,
           full_name: fullName,
           email,
-          role: userForm.role
-        }
-        
-        if (userForm.password) {
-          updateData.password_hash = userForm.password
-        }
+          role: userForm.role,
+          password: userForm.password || undefined
+        })
 
-        const { error: updateError } = await supabase
-          .from('app_users')
-          .update(updateData)
-          .eq('id', editingUser.id)
-
-        if (updateError) throw updateError
         success('User updated!')
       } else {
-        const { error: insertError } = await supabase
-          .from('app_users')
-          .insert([{
-            full_name: fullName,
-            email,
-            password_hash: password,
-            role: userForm.role
-          }])
+        await createAppUser({
+          full_name: fullName,
+          email,
+          password,
+          role: userForm.role
+        })
 
-        if (insertError) throw insertError
         success('User created!')
       }
 
@@ -165,12 +150,7 @@ export default function AdminSettings() {
     if (!(await confirmToast('Delete this user?', { confirmText: 'Delete' }))) return
 
     try {
-      const { error: deleteError } = await supabase
-        .from('app_users')
-        .delete()
-        .eq('id', id)
-
-      if (deleteError) throw deleteError
+      await deleteAppUser(id)
       success('User deleted!')
       fetchUsers()
     } catch (err) {

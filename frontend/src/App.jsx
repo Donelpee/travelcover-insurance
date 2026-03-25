@@ -14,14 +14,21 @@ import { Toaster } from 'react-hot-toast'
 import JourneyAutomation from './pages/JourneyAutomation'
 import { processDueNotifications } from './services/notificationService'
 import { usePermissions } from './contexts/PermissionsContext'
+import SignInScreen from './components/SignInScreen'
 
 
 function App() {
   const isProcessingRef = useRef(false)
-  const { currentUser, loading, signInAgain } = usePermissions()
+  const { currentUser, loading } = usePermissions()
 
   useEffect(() => {
     let isMounted = true
+
+    if (!currentUser) {
+      return () => {
+        isMounted = false
+      }
+    }
 
     const runDueProcessor = async () => {
       if (!isMounted || isProcessingRef.current) return
@@ -51,9 +58,9 @@ function App() {
       window.clearInterval(intervalId)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [])
+  }, [currentUser])
 
-  if (!loading && !currentUser) {
+  if (loading) {
     return (
       <>
         <Toaster
@@ -70,16 +77,30 @@ function App() {
         />
         <div className="min-h-screen bg-slate-100 flex items-center justify-center p-6">
           <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center">
-            <h1 className="text-2xl font-bold text-slate-800">You are signed out</h1>
-            <p className="text-sm text-slate-600 mt-2">Your admin session has ended. Sign in again to continue.</p>
-            <button
-              onClick={signInAgain}
-              className="btn-primary w-full mt-6"
-            >
-              Sign In Again
-            </button>
+            <h1 className="text-2xl font-bold text-slate-800">Loading secure session</h1>
+            <p className="text-sm text-slate-600 mt-2">Checking your Supabase session and linked app user profile.</p>
           </div>
         </div>
+      </>
+    )
+  }
+
+  if (!currentUser) {
+    return (
+      <>
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            duration: 3500,
+            style: {
+              border: '1px solid #e2e8f0',
+              background: '#ffffff',
+              color: '#0f172a',
+              boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)'
+            }
+          }}
+        />
+        <SignInScreen />
       </>
     )
   }
