@@ -19,7 +19,7 @@ import SignInScreen from './components/SignInScreen'
 
 function App() {
   const isProcessingRef = useRef(false)
-  const { currentUser, loading } = usePermissions()
+  const { currentUser, loading, isPasswordRecovery } = usePermissions()
 
   useEffect(() => {
     let isMounted = true
@@ -85,7 +85,7 @@ function App() {
     )
   }
 
-  if (!currentUser) {
+  if (isPasswordRecovery || !currentUser) {
     return (
       <>
         <Toaster

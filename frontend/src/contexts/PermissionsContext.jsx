@@ -4,11 +4,25 @@ import { getCurrentAppUserProfile } from '../services/appUsers'
 
 const PermissionsContext = createContext()
 
+function detectPasswordRecoveryFromUrl() {
+  if (typeof window === 'undefined') return false
+
+  const search = new URLSearchParams(window.location.search)
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+
+  return (
+    search.get('type') === 'recovery' ||
+    search.get('reset_password') === 'true' ||
+    hash.get('type') === 'recovery'
+  )
+}
+
 export function PermissionsProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null)
   const [permissions, setPermissions] = useState([])
   const [loading, setLoading] = useState(true)
   const [authError, setAuthError] = useState('')
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(detectPasswordRecoveryFromUrl())
 
   async function loadCurrentUser() {
     setLoading(true)
@@ -24,6 +38,13 @@ export function PermissionsProvider({ children }) {
       }
 
       if (!session) {
+        setCurrentUser(null)
+        setPermissions([])
+        setLoading(false)
+        return null
+      }
+
+      if (isPasswordRecovery) {
         setCurrentUser(null)
         setPermissions([])
         setLoading(false)
@@ -75,12 +96,24 @@ export function PermissionsProvider({ children }) {
     } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isMounted) return
 
-      if (event === 'SIGNED_OUT' || !session) {
+      if (event === 'PASSWORD_RECOVERY') {
         setCurrentUser(null)
         setPermissions([])
+        setAuthError('')
+        setIsPasswordRecovery(true)
         setLoading(false)
         return
       }
+
+      if (event === 'SIGNED_OUT' || !session) {
+        setCurrentUser(null)
+        setPermissions([])
+        setIsPasswordRecovery(false)
+        setLoading(false)
+        return
+      }
+
+      setIsPasswordRecovery(false)
 
       window.setTimeout(() => {
         if (isMounted) {
@@ -98,6 +131,7 @@ export function PermissionsProvider({ children }) {
   async function signIn(email, password) {
     setLoading(true)
     setAuthError('')
+    setIsPasswordRecovery(false)
 
     const { error } = await supabase.auth.signInWithPassword({
       email,
@@ -126,8 +160,51 @@ export function PermissionsProvider({ children }) {
     } finally {
       setCurrentUser(null)
       setPermissions([])
+      setIsPasswordRecovery(false)
       setLoading(false)
     }
+  }
+
+  async function requestPasswordReset(email) {
+    const redirectTo = `${window.location.origin}${window.location.pathname}?reset_password=true`
+
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo,
+    })
+
+    if (error) {
+      throw error
+    }
+  }
+
+  async function completePasswordRecovery(newPassword) {
+    setLoading(true)
+    setAuthError('')
+
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      })
+
+      if (error) {
+        throw error
+      }
+
+      window.history.replaceState({}, document.title, window.location.pathname)
+      await supabase.auth.signOut()
+      setIsPasswordRecovery(false)
+      setLoading(false)
+    } catch (error) {
+      setLoading(false)
+      setAuthError(error?.message || 'Unable to update your password.')
+      throw error
+    }
+  }
+
+  function cancelPasswordRecovery() {
+    window.history.replaceState({}, document.title, window.location.pathname)
+    setIsPasswordRecovery(false)
+    setAuthError('')
   }
 
   function clearAuthError() {
@@ -155,10 +232,14 @@ export function PermissionsProvider({ children }) {
         hasAnyPermission,
         hasAllPermissions,
         signIn,
+        requestPasswordReset,
+        completePasswordRecovery,
+        cancelPasswordRecovery,
         signOut,
         loading,
         authError,
         clearAuthError,
+        isPasswordRecovery,
       }}
     >
       {children}
