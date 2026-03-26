@@ -17,6 +17,19 @@ function detectPasswordRecoveryFromUrl() {
   )
 }
 
+function getPasswordResetRedirectUrl() {
+  const configuredRedirect =
+    import.meta.env.VITE_AUTH_REDIRECT_URL?.trim() ||
+    import.meta.env.VITE_PASSWORD_RESET_REDIRECT_URL?.trim()
+
+  const redirectUrl = configuredRedirect || `${window.location.origin}${window.location.pathname}`
+  const url = new URL(redirectUrl, window.location.origin)
+
+  url.searchParams.set('reset_password', 'true')
+
+  return url.toString()
+}
+
 export function PermissionsProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null)
   const [permissions, setPermissions] = useState([])
@@ -166,7 +179,7 @@ export function PermissionsProvider({ children }) {
   }
 
   async function requestPasswordReset(email) {
-    const redirectTo = `${window.location.origin}${window.location.pathname}?reset_password=true`
+    const redirectTo = getPasswordResetRedirectUrl()
 
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo,
